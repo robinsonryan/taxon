@@ -2,6 +2,7 @@
 
 namespace RobinsonRyan\Taxon;
 
+use BackedEnum;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Support\Arr;
@@ -11,6 +12,86 @@ use RobinsonRyan\Taxon\Models\Tag;
 
 trait HasTags
 {
+    /*
+    |--------------------------------------------------------------------------
+    | Magic Attribute Access
+    |--------------------------------------------------------------------------
+    */
+
+    public function getAttribute($key)
+    {
+        // Check if this key is a declared tag attribute
+        if ($this->isTagAttribute($key)) {
+            return $this->getTagAttributeValue($key);
+        }
+
+        return parent::getAttribute($key);
+    }
+
+    public function setAttribute($key, $value)
+    {
+        // Check if this key is a declared tag attribute
+        if ($this->isTagAttribute($key)) {
+            $this->setTagAttributeValue($key, $value);
+
+            return $this;
+        }
+
+        return parent::setAttribute($key, $value);
+    }
+
+    protected function isTagAttribute(string $key): bool
+    {
+        if (! property_exists($this, 'tagAttributes')) {
+            return false;
+        }
+
+        // Supports both indexed array ['status'] and associative ['status' => Definition::class]
+        return array_key_exists($key, $this->tagAttributes)
+            || in_array($key, $this->tagAttributes, true);
+    }
+
+    protected function getTagAttributeValue(string $key): mixed
+    {
+        $definition = $this->getTagAttributeDefinition($key);
+
+        if ($definition !== null) {
+            return $this->getTagAs($definition);
+        }
+
+        return $this->getTagValueIn($key);
+    }
+
+    protected function setTagAttributeValue(string $key, mixed $value): void
+    {
+        $definition = $this->getTagAttributeDefinition($key);
+
+        if ($definition !== null) {
+            $this->setTagAs($definition, $value);
+
+            return;
+        }
+
+        $this->setTag($key, $value);
+    }
+
+    protected function getTagAttributeDefinition(string $key): ?string
+    {
+        if (! property_exists($this, 'tagAttributes')) {
+            return null;
+        }
+
+        // If associative with class value
+        if (array_key_exists($key, $this->tagAttributes)) {
+            $value = $this->tagAttributes[$key];
+            if (is_string($value) && class_exists($value)) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Relationships
@@ -380,5 +461,81 @@ trait HasTags
             ['slug' => $slug, 'parent_id' => $category->id],
             ['name' => $value, 'assignable' => true]
         );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | TagDefinition Methods
+    |--------------------------------------------------------------------------
+    */
+
+    public function setTagAs(string $definitionClass, string|BackedEnum $value): static
+    {
+        $this->validateDefinitionValue($definitionClass, $value);
+
+        $valueTag = $definitionClass::valueTag($value);
+
+        // Remove existing tags in this category
+        $categoryTag = $definitionClass::tag();
+        $existingIds = $categoryTag->children()->pluck('id');
+        $this->tags()->detach($existingIds);
+
+        // Attach new value
+        $this->tags()->attach($valueTag->id);
+        $this->load('tags');
+
+        return $this;
+    }
+
+    public function addTagAs(string $definitionClass, string|BackedEnum $value): static
+    {
+        $this->validateDefinitionValue($definitionClass, $value);
+
+        $valueTag = $definitionClass::valueTag($value);
+
+        $this->tags()->syncWithoutDetaching([$valueTag->id]);
+        $this->load('tags');
+
+        return $this;
+    }
+
+    public function getTagAs(string $definitionClass): string|BackedEnum|null
+    {
+        $categoryTag = $definitionClass::tag();
+
+        $valueTag = $this->tags
+            ->first(fn (Tag $tag) => $tag->parent_id === $categoryTag->id);
+
+        if (! $valueTag) {
+            return null;
+        }
+
+        if ($enum = $definitionClass::enum()) {
+            return $enum::tryFrom($valueTag->slug);
+        }
+
+        return $valueTag->slug;
+    }
+
+    public function hasTagAs(string $definitionClass, string|BackedEnum $value): bool
+    {
+        $slug = $value instanceof BackedEnum ? $value->value : Str::slug($value);
+        $categoryTag = $definitionClass::tag();
+
+        return $this->tags->contains(function (Tag $tag) use ($categoryTag, $slug) {
+            return $tag->parent_id === $categoryTag->id && $tag->slug === $slug;
+        });
+    }
+
+    protected function validateDefinitionValue(string $definitionClass, string|BackedEnum $value): void
+    {
+        if (! $definitionClass::isValidValue($value)) {
+            $slug = $value instanceof BackedEnum ? $value->value : $value;
+
+            throw new \RobinsonRyan\Taxon\Exceptions\InvalidTagValueException(
+                $slug,
+                $definitionClass
+            );
+        }
     }
 }
