@@ -13,8 +13,12 @@ class TestUser extends Model
 
     protected $guarded = [];
 
+    protected $casts = [
+        'is_admin' => 'boolean',
+    ];
+
     public function isAdmin(): bool
     {
-        return $this->is_admin;
+        return $this->is_admin ?? false;
     }
 }
