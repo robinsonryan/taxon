@@ -31,12 +31,6 @@ composer analyze
 # Code formatting (Laravel Pint)
 composer lint
 
-# Check formatting without fixing
-composer lint:check
-
-# Run Rector refactoring
-composer refactor
-
 # Full quality check (lint, analyze, test)
 composer quality
 ```
@@ -59,34 +53,58 @@ ddev quality         # Full quality checks
 - Tags auto-created on first use
 
 **Tier 2: Class-Based TagDefinitions** - Structured tags with guards
-- Enum-backed, array-backed, or database-backed values
-- Transition guards and lifecycle hooks
-- Magic property accessors
+- Enum-backed (immutable) or database-backed (mutable) values
+- Transition guards with `canTransition()` and `transitionTo()`
+- Magic property accessors via `$tagAttributes`
 
 ### Key Components
 
-- `HasTags` trait - Core tagging functionality for models
-- `TagDefinition` - Base class for class-based tag definitions
-- `Tag` model - Hierarchical tag storage (categories are parent tags)
-- `TaxonManager` - Central coordination facade
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `HasTags` trait | `src/HasTags.php` | Core tagging for models |
+| `TagDefinition` | `src/TagDefinition.php` | Base class for structured tags |
+| `Tag` model | `src/Models/Tag.php` | Hierarchical tag storage |
+| `ConfiguresIdentifiers` | `src/Concerns/` | UUID7/incrementing ID support |
 
-### Directory Structure
+### Exceptions
 
-```
-src/
-├── Concerns/           # Traits (HasDirectTags, HasCategoryTags, etc.)
-├── Contracts/          # Interfaces
-├── Exceptions/         # Custom exceptions
-├── Models/Tag.php      # Tag Eloquent model
-├── HasTags.php         # Main trait for models
-├── TagDefinition.php   # Base class for definitions
-└── TaxonServiceProvider.php
-```
+- `TagNotFoundException` - Category not found when auto_create=false
+- `TagInUseException` - Cannot delete tag with active taggables
+- `InvalidTagValueException` - Value not valid for TagDefinition
+- `InvalidTransitionException` - State transition blocked by guard
+- `ImmutableTagDefinitionException` - Cannot modify enum-backed definition
 
 ### Testing
 
 Uses Pest with Orchestra Testbench. Tests run against SQLite in-memory.
 
-- `tests/Feature/` - Integration tests
-- `tests/Unit/` - Unit tests
-- `tests/Fixtures/` - Test models and definitions
+```
+tests/
+├── Feature/              # Integration tests
+│   ├── DirectTaggingTest.php
+│   ├── CategoryTaggingTest.php
+│   ├── TagDefinitionTest.php
+│   ├── MagicAttributesTest.php
+│   ├── TransitionGuardsTest.php
+│   ├── TenantScopingTest.php
+│   └── TagsTaggingTagsTest.php
+├── Unit/                 # Unit tests
+└── Fixtures/             # Test models and definitions
+    ├── Models/
+    └── Definitions/
+```
+
+### Key Patterns
+
+**Category Tags**: Parent tag (non-assignable) with child value tags
+```php
+$status = Tag::createCategory('Status');
+$status->addChildren(['pending', 'complete']);
+```
+
+**Tag Model uses HasTags**: Enables RBAC patterns (roles tagging permissions)
+```php
+$adminRole->tag(['users.create', 'users.delete']);
+```
+
+**Tenant Scoping**: Tags have optional tenant_id, resolved from model or auth user
