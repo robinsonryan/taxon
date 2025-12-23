@@ -538,4 +538,31 @@ trait HasTags
             );
         }
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transition Methods
+    |--------------------------------------------------------------------------
+    */
+
+    public function transitionTo(string $definitionClass, BackedEnum $to, $user = null): static
+    {
+        $definition = new $definitionClass;
+        $from = $this->getTagAs($definitionClass);
+
+        if (! method_exists($definition, 'canTransition')) {
+            // No guards defined, just set it
+            return $this->setTagAs($definitionClass, $to);
+        }
+
+        if (! $definition->canTransition($this, $from, $to, $user)) {
+            throw new \RobinsonRyan\Taxon\Exceptions\InvalidTransitionException(
+                $this,
+                $from,
+                $to
+            );
+        }
+
+        return $this->setTagAs($definitionClass, $to);
+    }
 }
