@@ -67,7 +67,7 @@ abstract class TagDefinition
             [
                 'slug' => static::$slug,
                 'parent_id' => null,
-                'tenant_id' => $tenantId,
+                config('taxon.tenant.column', 'tenant_id') => $tenantId,
             ],
             [
                 'name' => static::$name ?? Str::headline(static::$slug),
@@ -86,7 +86,7 @@ abstract class TagDefinition
             [
                 'slug' => $slug,
                 'parent_id' => static::tag()->id,
-                'tenant_id' => static::$global ? null : static::currentTenantId(),
+                config('taxon.tenant.column', 'tenant_id') => static::$global ? null : static::currentTenantId(),
             ],
             [
                 'name' => $name,
@@ -116,7 +116,7 @@ abstract class TagDefinition
             'name' => $name,
             'slug' => $slug ?? Str::slug($name),
             'parent_id' => static::tag()->id,
-            'tenant_id' => static::$global ? null : static::currentTenantId(),
+            config('taxon.tenant.column', 'tenant_id') => static::$global ? null : static::currentTenantId(),
             'assignable' => true,
         ]);
     }
@@ -139,7 +139,7 @@ abstract class TagDefinition
             [
                 'slug' => $slug,
                 'parent_id' => static::tag()->id,
-                'tenant_id' => static::$global ? null : static::currentTenantId(),
+                config('taxon.tenant.column', 'tenant_id') => static::$global ? null : static::currentTenantId(),
             ],
             [
                 'name' => $name ?? Str::headline($slug),

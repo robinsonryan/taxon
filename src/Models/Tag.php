@@ -148,6 +148,13 @@ class Tag extends Model
         return $query->where('parent_id', $parent);
     }
 
+    public function scopeInCategory(Builder $query, string $category): Builder
+    {
+        return $query->whereHas('parent', fn (Builder $q) => $q
+            ->where('slug', Str::slug($category))
+            ->whereNull('parent_id'));
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Factory Methods
@@ -164,7 +171,7 @@ class Tag extends Model
             'name' => $name,
             'slug' => $slug ?? Str::slug($name),
             'parent_id' => null,
-            'tenant_id' => $tenantId,
+            config('taxon.tenant.column', 'tenant_id') => $tenantId,
             'assignable' => false,
             'single_select' => $singleSelect,
         ]);
@@ -180,7 +187,7 @@ class Tag extends Model
             'name' => $name,
             'slug' => $slug ?? Str::slug($name),
             'parent_id' => $parentId,
-            'tenant_id' => $tenantId,
+            config('taxon.tenant.column', 'tenant_id') => $tenantId,
             'assignable' => true,
         ]);
     }
