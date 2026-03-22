@@ -1,8 +1,10 @@
 <?php
 
+use RobinsonRyan\Taxon\TaxonServiceProvider;
+
 describe('Phase 1 Scaffolding', function () {
     it('can load the service provider', function () {
-        expect(class_exists(\RobinsonRyan\Taxon\TaxonServiceProvider::class))->toBeTrue();
+        expect(class_exists(TaxonServiceProvider::class))->toBeTrue();
     });
 
     it('can access taxon config', function () {

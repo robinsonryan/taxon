@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\DB;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusEnum;
@@ -216,7 +217,7 @@ describe('Scoped TagDefinition methods', function () {
         $this->model->addTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
 
         $pivotTable = config('taxon.tables.taggables', 'taggables');
-        $count = \Illuminate\Support\Facades\DB::table($pivotTable)
+        $count = DB::table($pivotTable)
             ->where('taggable_type', $this->model->getMorphClass())
             ->where('taggable_id', $this->model->getKey())
             ->where('scope_type', $this->orgA->getMorphClass())

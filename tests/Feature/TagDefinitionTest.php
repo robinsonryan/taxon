@@ -1,5 +1,7 @@
 <?php
 
+use RobinsonRyan\Taxon\Exceptions\ImmutableTagDefinitionException;
+use RobinsonRyan\Taxon\Exceptions\InvalidTagValueException;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\PriorityDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusDefinition;
@@ -69,7 +71,7 @@ describe('TagDefinition - Database Backed', function () {
 
     it('throws when adding to immutable definition', function () {
         StatusDefinition::addValue('New Status');
-    })->throws(\RobinsonRyan\Taxon\Exceptions\ImmutableTagDefinitionException::class);
+    })->throws(ImmutableTagDefinitionException::class);
 });
 
 describe('TagDefinition - Model Integration', function () {
@@ -91,7 +93,7 @@ describe('TagDefinition - Model Integration', function () {
 
     it('validates against definition values', function () {
         $this->model->setTagAs(StatusDefinition::class, 'invalid');
-    })->throws(\RobinsonRyan\Taxon\Exceptions\InvalidTagValueException::class);
+    })->throws(InvalidTagValueException::class);
 
     it('gets typed value via definition', function () {
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::APPROVED);

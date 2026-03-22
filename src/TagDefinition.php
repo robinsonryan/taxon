@@ -30,6 +30,7 @@ abstract class TagDefinition
         return null;
     }
 
+    /** @return array<int, string> */
     public static function values(): array
     {
         if ($enum = static::enum()) {
@@ -173,6 +174,7 @@ abstract class TagDefinition
     |--------------------------------------------------------------------------
     */
 
+    /** @return Collection<int, Tag> */
     public static function allValueTags(): Collection
     {
         return static::tag()->children;

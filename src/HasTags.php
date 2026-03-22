@@ -4,11 +4,15 @@ namespace RobinsonRyan\Taxon;
 
 use BackedEnum;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use RobinsonRyan\Taxon\Contracts\Scope;
+use RobinsonRyan\Taxon\Exceptions\InvalidTagValueException;
+use RobinsonRyan\Taxon\Exceptions\InvalidTransitionException;
+use RobinsonRyan\Taxon\Exceptions\TagNotFoundException;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Models\Taggable;
 
@@ -77,6 +81,7 @@ trait HasTags
         $this->setTag($key, $value);
     }
 
+    /** @return class-string<TagDefinition>|null */
     protected function getTagAttributeDefinition(string $key): ?string
     {
         if (! property_exists($this, 'tagAttributes')) {
@@ -86,7 +91,7 @@ trait HasTags
         // If associative with class value
         if (array_key_exists($key, $this->tagAttributes)) {
             $value = $this->tagAttributes[$key];
-            if (is_string($value) && class_exists($value)) {
+            if (is_string($value) && class_exists($value) && is_subclass_of($value, TagDefinition::class)) {
                 return $value;
             }
         }
@@ -100,12 +105,16 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
+    /** @return MorphToMany<Tag, $this> */
     public function tags(): MorphToMany
     {
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
+        /** @var class-string<Tag> $tagModel */
+        $tagModel = config('taxon.tag_model', Tag::class);
+
         return $this->morphToMany(
-            config('taxon.tag_model', Tag::class),
+            $tagModel,
             'taggable',
             $pivotTable
         )
@@ -120,6 +129,7 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
+    /** @return array<string, string|int> */
     protected function buildScopePivotData(?Scope $scope): array
     {
         return $scope ? [
@@ -128,7 +138,8 @@ trait HasTags
         ] : [];
     }
 
-    protected function applyScopeFilter(MorphToMany|Builder $query, string $pivotTable, ?Scope $scope): MorphToMany|Builder
+    /** @param MorphToMany<covariant Model, covariant Model>|Builder<covariant Model> $query */
+    protected function applyScopeFilter(MorphToMany|Builder $query, string $pivotTable, ?Scope $scope): void
     {
         if ($scope !== null) {
             $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
@@ -137,17 +148,16 @@ trait HasTags
             $query->whereNull("{$pivotTable}.scope_type")
                 ->whereNull("{$pivotTable}.scope_id");
         }
-
-        return $query;
     }
 
-    protected function applyScopeFilterToHas(Builder $query, string $pivotTable, ?Scope $scope): Builder
+    /** @param Builder<Model> $query */
+    protected function applyScopeFilterToHas(Builder $query, string $pivotTable, ?Scope $scope): void
     {
         if ($scope === null) {
-            return $query;
+            return;
         }
 
-        return $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
+        $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
             ->where("{$pivotTable}.scope_id", $scope->getScopeId());
     }
 
@@ -195,6 +205,7 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
+    /** @param string|array<string> $tags */
     public function tag(string|array $tags): static
     {
         $tags = Arr::wrap($tags);
@@ -206,6 +217,7 @@ trait HasTags
         return $this;
     }
 
+    /** @param string|array<string> $tags */
     public function untag(string|array $tags): static
     {
         $tags = Arr::wrap($tags);
@@ -217,6 +229,7 @@ trait HasTags
         return $this;
     }
 
+    /** @param array<string> $tags */
     public function retag(array $tags): static
     {
         $tagModels = $this->resolveOrCreateTags($tags);
@@ -248,18 +261,20 @@ trait HasTags
         });
     }
 
+    /** @param array<string> $tags */
     public function hasAnyTag(array $tags): bool
     {
-        $slugs = collect($tags)->map(fn ($t) => Str::slug($t));
+        $slugs = collect($tags)->map(fn (string $t) => Str::slug($t));
 
         return $this->tags->contains(function (Tag $t) use ($slugs) {
             return $slugs->contains($t->slug);
         });
     }
 
+    /** @param array<string> $tags */
     public function hasAllTags(array $tags): bool
     {
-        $slugs = collect($tags)->map(fn ($t) => Str::slug($t));
+        $slugs = collect($tags)->map(fn (string $t) => Str::slug($t));
         $modelSlugs = $this->tags->pluck('slug');
 
         return $slugs->every(fn ($slug) => $modelSlugs->contains($slug));
@@ -271,31 +286,40 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
-    public function scopeWithTag(Builder $query, string $tag, ?Scope $scope = null): Builder
+    /** @param Builder<Model> $query */
+    public function scopeWithTag(Builder $query, string $tag, ?Scope $scope = null): void
     {
         $slug = Str::slug($tag);
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $query->whereHas('tags', function (Builder $q) use ($slug, $pivotTable, $scope) {
+        $query->whereHas('tags', function (Builder $q) use ($slug, $pivotTable, $scope) {
             $q->where('slug', $slug);
             $this->applyScopeFilterToHas($q, $pivotTable, $scope);
         });
     }
 
-    public function scopeWithAnyTag(Builder $query, array $tags, ?Scope $scope = null): Builder
+    /**
+     * @param  Builder<Model>  $query
+     * @param  array<string>  $tags
+     */
+    public function scopeWithAnyTag(Builder $query, array $tags, ?Scope $scope = null): void
     {
-        $slugs = collect($tags)->map(fn ($t) => Str::slug($t));
+        $slugs = collect($tags)->map(fn (string $t) => Str::slug($t));
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $query->whereHas('tags', function (Builder $q) use ($slugs, $pivotTable, $scope) {
+        $query->whereHas('tags', function (Builder $q) use ($slugs, $pivotTable, $scope) {
             $q->whereIn('slug', $slugs);
             $this->applyScopeFilterToHas($q, $pivotTable, $scope);
         });
     }
 
-    public function scopeWithAllTags(Builder $query, array $tags, ?Scope $scope = null): Builder
+    /**
+     * @param  Builder<Model>  $query
+     * @param  array<string>  $tags
+     */
+    public function scopeWithAllTags(Builder $query, array $tags, ?Scope $scope = null): void
     {
-        $slugs = collect($tags)->map(fn ($t) => Str::slug($t));
+        $slugs = collect($tags)->map(fn (string $t) => Str::slug($t));
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
         foreach ($slugs as $slug) {
@@ -304,16 +328,15 @@ trait HasTags
                 $this->applyScopeFilterToHas($q, $pivotTable, $scope);
             });
         }
-
-        return $query;
     }
 
-    public function scopeWithoutTag(Builder $query, string $tag, ?Scope $scope = null): Builder
+    /** @param Builder<Model> $query */
+    public function scopeWithoutTag(Builder $query, string $tag, ?Scope $scope = null): void
     {
         $slug = Str::slug($tag);
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $query->whereDoesntHave('tags', function (Builder $q) use ($slug, $pivotTable, $scope) {
+        $query->whereDoesntHave('tags', function (Builder $q) use ($slug, $pivotTable, $scope) {
             $q->where('slug', $slug);
             $this->applyScopeFilterToHas($q, $pivotTable, $scope);
         });
@@ -325,9 +348,13 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * @param  array<string>  $tags
+     * @return Collection<int, Tag>
+     */
     protected function resolveOrCreateTags(array $tags): Collection
     {
-        return collect($tags)->map(function ($tag) {
+        return collect($tags)->map(function (string $tag) {
             $slug = Str::slug($tag);
 
             return Tag::firstOrCreate(
@@ -337,6 +364,10 @@ trait HasTags
         });
     }
 
+    /**
+     * @param  array<string>  $tags
+     * @return Collection<int, Tag>
+     */
     protected function resolveTags(array $tags): Collection
     {
         $slugs = collect($tags)->map(fn ($t) => Str::slug($t));
@@ -382,6 +413,7 @@ trait HasTags
         return $this;
     }
 
+    /** @param array<string> $values */
     public function addTags(string $category, array $values, ?Scope $scope = null): static
     {
         foreach ($values as $value) {
@@ -422,6 +454,7 @@ trait HasTags
         $query = $this->tags()->whereIn("{$pivotTable}.tag_id", $valueTagIds);
         $this->applyScopeFilter($query, $pivotTable, $scope);
 
+        /** @var Collection<int, Tag> $matchingTags */
         $matchingTags = $query->get();
         foreach ($matchingTags as $tag) {
             $this->deleteScopedPivotRecord($tag->id, $scope);
@@ -438,6 +471,7 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
+    /** @return Collection<int, Tag> */
     public function tagsIn(string $category, ?Scope $scope = null): Collection
     {
         $categoryTag = Tag::where('slug', Str::slug($category))
@@ -452,11 +486,13 @@ trait HasTags
         $query = $this->tags()->where('parent_id', $categoryTag->id);
         $this->applyScopeFilter($query, $pivotTable, $scope);
 
+        /** @var Collection<int, Tag> */
         return $query->get();
     }
 
     public function getTagIn(string $category, ?Scope $scope = null): ?Tag
     {
+        /** @var Tag|null */
         return $this->tagsIn($category, $scope)->first();
     }
 
@@ -478,17 +514,19 @@ trait HasTags
         );
     }
 
+    /** @param array<string> $values */
     public function hasAnyTagIn(string $category, array $values, ?Scope $scope = null): bool
     {
-        $slugs = collect($values)->map(fn ($v) => Str::slug($v));
+        $slugs = collect($values)->map(fn (string $v) => Str::slug($v));
         $modelSlugs = $this->tagsIn($category, $scope)->pluck('slug');
 
         return $slugs->contains(fn ($slug) => $modelSlugs->contains($slug));
     }
 
+    /** @param array<string> $values */
     public function hasAllTagsIn(string $category, array $values, ?Scope $scope = null): bool
     {
-        $slugs = collect($values)->map(fn ($v) => Str::slug($v));
+        $slugs = collect($values)->map(fn (string $v) => Str::slug($v));
         $modelSlugs = $this->tagsIn($category, $scope)->pluck('slug');
 
         return $slugs->every(fn ($slug) => $modelSlugs->contains($slug));
@@ -500,39 +538,45 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
-    public function scopeWithTagIn(Builder $query, string $category, string $value, ?Scope $scope = null): Builder
+    /** @param Builder<Model> $query */
+    public function scopeWithTagIn(Builder $query, string $category, string $value, ?Scope $scope = null): void
     {
         $categorySlug = Str::slug($category);
         $valueSlug = Str::slug($value);
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $query->whereHas('tags', function (Builder $q) use ($categorySlug, $valueSlug, $pivotTable, $scope) {
+        $query->whereHas('tags', function (Builder $q) use ($categorySlug, $valueSlug, $pivotTable, $scope) {
             $q->where('slug', $valueSlug)
                 ->whereHas('parent', fn (Builder $p) => $p->where('slug', $categorySlug));
             $this->applyScopeFilterToHas($q, $pivotTable, $scope);
         });
     }
 
-    public function scopeWithAnyTagIn(Builder $query, string $category, array $values, ?Scope $scope = null): Builder
+    /**
+     * @param  Builder<Model>  $query
+     * @param  array<string>  $values
+     */
+    public function scopeWithAnyTagIn(Builder $query, string $category, array $values, ?Scope $scope = null): void
     {
         $categorySlug = Str::slug($category);
-        $valueSlugs = collect($values)->map(fn ($v) => Str::slug($v));
+        $valueSlugs = collect($values)->map(fn (string $v) => Str::slug($v));
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $query->whereHas('tags', function (Builder $q) use ($categorySlug, $valueSlugs, $pivotTable, $scope) {
+        $query->whereHas('tags', function (Builder $q) use ($categorySlug, $valueSlugs, $pivotTable, $scope) {
             $q->whereIn('slug', $valueSlugs)
                 ->whereHas('parent', fn (Builder $p) => $p->where('slug', $categorySlug));
             $this->applyScopeFilterToHas($q, $pivotTable, $scope);
         });
     }
 
-    public function scopeWithoutTagIn(Builder $query, string $category, string $value, ?Scope $scope = null): Builder
+    /** @param Builder<Model> $query */
+    public function scopeWithoutTagIn(Builder $query, string $category, string $value, ?Scope $scope = null): void
     {
         $categorySlug = Str::slug($category);
         $valueSlug = Str::slug($value);
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $query->whereDoesntHave('tags', function (Builder $q) use ($categorySlug, $valueSlug, $pivotTable, $scope) {
+        $query->whereDoesntHave('tags', function (Builder $q) use ($categorySlug, $valueSlug, $pivotTable, $scope) {
             $q->where('slug', $valueSlug)
                 ->whereHas('parent', fn (Builder $p) => $p->where('slug', $categorySlug));
             $this->applyScopeFilterToHas($q, $pivotTable, $scope);
@@ -556,7 +600,7 @@ trait HasTags
         }
 
         if (! $tag) {
-            throw new \RobinsonRyan\Taxon\Exceptions\TagNotFoundException(
+            throw new TagNotFoundException(
                 "Category tag '{$category}' not found."
             );
         }
@@ -580,6 +624,7 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
+    /** @param class-string<TagDefinition> $definitionClass */
     public function setTagAs(string $definitionClass, string|BackedEnum $value, ?Scope $scope = null): static
     {
         $this->validateDefinitionValue($definitionClass, $value);
@@ -593,6 +638,7 @@ trait HasTags
         $query = $this->tags()->whereIn("{$pivotTable}.tag_id", $existingIds);
         $this->applyScopeFilter($query, $pivotTable, $scope);
 
+        /** @var Tag $tag */
         foreach ($query->get() as $tag) {
             $this->deleteScopedPivotRecord($tag->id, $scope);
         }
@@ -605,6 +651,7 @@ trait HasTags
         return $this;
     }
 
+    /** @param class-string<TagDefinition> $definitionClass */
     public function addTagAs(string $definitionClass, string|BackedEnum $value, ?Scope $scope = null): static
     {
         $this->validateDefinitionValue($definitionClass, $value);
@@ -621,6 +668,7 @@ trait HasTags
         return $this;
     }
 
+    /** @param class-string<TagDefinition> $definitionClass */
     public function getTagAs(string $definitionClass, ?Scope $scope = null): string|BackedEnum|null
     {
         $categoryTag = $definitionClass::tag();
@@ -629,6 +677,7 @@ trait HasTags
         $query = $this->tags()->where('parent_id', $categoryTag->id);
         $this->applyScopeFilter($query, $pivotTable, $scope);
 
+        /** @var Tag|null $valueTag */
         $valueTag = $query->first();
 
         if (! $valueTag) {
@@ -642,6 +691,7 @@ trait HasTags
         return $valueTag->slug;
     }
 
+    /** @param class-string<TagDefinition> $definitionClass */
     public function hasTagAs(string $definitionClass, string|BackedEnum $value, ?Scope $scope = null): bool
     {
         $slug = $value instanceof BackedEnum ? $value->value : Str::slug($value);
@@ -656,12 +706,13 @@ trait HasTags
         return $query->exists();
     }
 
+    /** @param class-string<TagDefinition> $definitionClass */
     protected function validateDefinitionValue(string $definitionClass, string|BackedEnum $value): void
     {
         if (! $definitionClass::isValidValue($value)) {
-            $slug = $value instanceof BackedEnum ? $value->value : $value;
+            $slug = $value instanceof BackedEnum ? (string) $value->value : $value;
 
-            throw new \RobinsonRyan\Taxon\Exceptions\InvalidTagValueException(
+            throw new InvalidTagValueException(
                 $slug,
                 $definitionClass
             );
@@ -674,7 +725,8 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
-    public function transitionTo(string $definitionClass, BackedEnum $to, $user = null, ?Scope $scope = null): static
+    /** @param class-string<TagDefinition> $definitionClass */
+    public function transitionTo(string $definitionClass, BackedEnum $to, mixed $user = null, ?Scope $scope = null): static
     {
         $definition = new $definitionClass;
         $from = $this->getTagAs($definitionClass, $scope);
@@ -684,9 +736,11 @@ trait HasTags
         }
 
         if (! $definition->canTransition($this, $from, $to, $user)) {
-            throw new \RobinsonRyan\Taxon\Exceptions\InvalidTransitionException(
+            $fromEnum = $from instanceof BackedEnum ? $from : null;
+
+            throw new InvalidTransitionException(
                 $this,
-                $from,
+                $fromEnum,
                 $to
             );
         }

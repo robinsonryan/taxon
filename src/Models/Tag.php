@@ -14,6 +14,18 @@ use RobinsonRyan\Taxon\Concerns\ConfiguresIdentifiers;
 use RobinsonRyan\Taxon\Exceptions\TagInUseException;
 use RobinsonRyan\Taxon\HasTags;
 
+/**
+ * @property int|string $id
+ * @property string $name
+ * @property string $slug
+ * @property int|string|null $parent_id
+ * @property bool $assignable
+ * @property bool $single_select
+ * @property array<string, mixed>|null $meta
+ * @property-read Tag|null $parent
+ * @property-read Collection<int, Tag> $children
+ * @property-read Collection<int, Tag> $tags
+ */
 class Tag extends Model
 {
     use ConfiguresIdentifiers;
@@ -64,27 +76,34 @@ class Tag extends Model
     |--------------------------------------------------------------------------
     */
 
+    /** @return BelongsTo<Tag, $this> */
     public function parent(): BelongsTo
     {
         return $this->belongsTo(static::class, 'parent_id');
     }
 
+    /** @return HasMany<Tag, $this> */
     public function children(): HasMany
     {
         return $this->hasMany(static::class, 'parent_id');
     }
 
+    /**
+     * @param  class-string<Model>|null  $type
+     * @return MorphToMany<Model, $this>
+     */
     public function taggables(?string $type = null): MorphToMany
     {
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        $query = $this->morphedByMany(
-            $type ?? Model::class,
+        /** @var class-string<Model> $morphType */
+        $morphType = $type ?? Model::class;
+
+        return $this->morphedByMany(
+            $morphType,
             'taggable',
             $pivotTable
         );
-
-        return $query;
     }
 
     /*
@@ -119,38 +138,44 @@ class Tag extends Model
     |--------------------------------------------------------------------------
     */
 
-    public function scopeRoots(Builder $query): Builder
+    /** @param Builder<Tag> $query */
+    public function scopeRoots(Builder $query): void
     {
-        return $query->whereNull('parent_id');
+        $query->whereNull('parent_id');
     }
 
-    public function scopeCategories(Builder $query): Builder
+    /** @param Builder<Tag> $query */
+    public function scopeCategories(Builder $query): void
     {
-        return $query->whereHas('children');
+        $query->whereHas('children');
     }
 
-    public function scopeAssignable(Builder $query): Builder
+    /** @param Builder<Tag> $query */
+    public function scopeAssignable(Builder $query): void
     {
-        return $query->where('assignable', true);
+        $query->where('assignable', true);
     }
 
-    public function scopeSlug(Builder $query, string $slug): Builder
+    /** @param Builder<Tag> $query */
+    public function scopeSlug(Builder $query, string $slug): void
     {
-        return $query->where('slug', $slug);
+        $query->where('slug', $slug);
     }
 
-    public function scopeChildrenOf(Builder $query, string|int $parent): Builder
+    /** @param Builder<Tag> $query */
+    public function scopeChildrenOf(Builder $query, string|int $parent): void
     {
         if (is_string($parent)) {
             $parent = static::where('slug', $parent)->value('id');
         }
 
-        return $query->where('parent_id', $parent);
+        $query->where('parent_id', $parent);
     }
 
-    public function scopeInCategory(Builder $query, string $category): Builder
+    /** @param Builder<Tag> $query */
+    public function scopeInCategory(Builder $query, string $category): void
     {
-        return $query->whereHas('parent', fn (Builder $q) => $q
+        $query->whereHas('parent', fn (Builder $q) => $q
             ->where('slug', Str::slug($category))
             ->whereNull('parent_id'));
     }
@@ -167,6 +192,7 @@ class Tag extends Model
         bool $singleSelect = true,
         ?string $slug = null,
     ): static {
+        /** @var static */
         return static::create([
             'name' => $name,
             'slug' => $slug ?? Str::slug($name),
@@ -183,6 +209,7 @@ class Tag extends Model
         ?string $tenantId = null,
         ?string $slug = null,
     ): static {
+        /** @var static */
         return static::create([
             'name' => $name,
             'slug' => $slug ?? Str::slug($name),
@@ -208,12 +235,17 @@ class Tag extends Model
         );
     }
 
+    /** @return Collection<int, static> */
     public function addChildren(array $names): Collection
     {
         return collect($names)->map(fn ($name) => $this->addChild($name));
     }
 
-    public function syncChildren(array $values): Collection
+    /**
+     * @param  array<array{id?: int|string, name: string}>  $values
+     * @return \Illuminate\Database\Eloquent\Collection<int, Tag>
+     */
+    public function syncChildren(array $values): \Illuminate\Database\Eloquent\Collection
     {
         $keepIds = [];
 
@@ -245,12 +277,12 @@ class Tag extends Model
     {
         $this->assertNotInUse();
 
-        return $this->delete();
+        return (bool) $this->delete();
     }
 
     public function forceDelete(): bool
     {
-        return $this->delete();
+        return (bool) $this->delete();
     }
 
     protected function assertNotInUse(): void

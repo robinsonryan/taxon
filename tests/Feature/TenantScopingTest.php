@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Database\QueryException;
 use RobinsonRyan\Taxon\Models\Tag;
 
 describe('Tenant Scoping', function () {
@@ -31,7 +32,7 @@ describe('Tenant Scoping', function () {
 
         // Duplicate child should throw
         Tag::create(['name' => 'Active', 'slug' => 'active', 'parent_id' => $parent->id, 'tenant_id' => '1']);
-    })->throws(\Illuminate\Database\QueryException::class);
+    })->throws(QueryException::class);
 
     it('allows same slug in different tenants', function () {
         $tag1 = Tag::create(['name' => 'Status', 'tenant_id' => '1']);
