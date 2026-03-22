@@ -71,6 +71,16 @@ abstract class TestCase extends Orchestra
             $table->boolean('is_admin')->default(false);
             $table->timestamps();
         });
+
+        Schema::create('test_organizations', function (Blueprint $table) use ($useUuid) {
+            if ($useUuid) {
+                $table->uuid('id')->primary();
+            } else {
+                $table->id();
+            }
+            $table->string('name');
+            $table->timestamps();
+        });
     }
 
     /**
@@ -81,6 +91,7 @@ abstract class TestCase extends Orchestra
         config()->set('taxon.id_type', 'uuid7');
 
         // Recreate tables with UUID columns
+        Schema::dropIfExists('test_organizations');
         Schema::dropIfExists('test_users');
         Schema::dropIfExists('test_models');
         Schema::dropIfExists(config('taxon.tables.taggables'));
