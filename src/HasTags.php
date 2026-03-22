@@ -327,11 +327,11 @@ trait HasTags
 
         if ($valueTag) {
             $pivotTable = config('taxon.tables.taggables', 'taggables');
-            $query = $this->tags()->wherePivot('tag_id', $valueTag->id);
+            $query = $this->tags()->where("{$pivotTable}.tag_id", $valueTag->id);
 
             if ($scope !== null) {
-                $query->wherePivot('scope_type', $scope->getScopeType())
-                    ->wherePivot('scope_id', $scope->getScopeId());
+                $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                    ->where("{$pivotTable}.scope_id", $scope->getScopeId());
             } else {
                 $query->whereNull("{$pivotTable}.scope_type")
                     ->whereNull("{$pivotTable}.scope_id");
@@ -366,8 +366,8 @@ trait HasTags
         $query = $this->tags()->whereIn('tag_id', $valueTagIds);
 
         if ($scope !== null) {
-            $query->wherePivot('scope_type', $scope->getScopeType())
-                ->wherePivot('scope_id', $scope->getScopeId());
+            $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                ->where("{$pivotTable}.scope_id", $scope->getScopeId());
         } else {
             $query->whereNull("{$pivotTable}.scope_type")
                 ->whereNull("{$pivotTable}.scope_id");
@@ -419,8 +419,8 @@ trait HasTags
         return $this->tags()
             ->where('parent_id', $categoryTag->id)
             ->when($scope !== null, fn ($q) => $q
-                ->wherePivot('scope_type', $scope->getScopeType())
-                ->wherePivot('scope_id', $scope->getScopeId()))
+                ->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                ->where("{$pivotTable}.scope_id", $scope->getScopeId()))
             ->when($scope === null, fn ($q) => $q
                 ->whereNull("{$pivotTable}.scope_type")
                 ->whereNull("{$pivotTable}.scope_id"))
