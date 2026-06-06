@@ -10,3 +10,4 @@ phpstan.neon.cache
 *.swp
 .DS_Store
 coverage/
+.workspace
