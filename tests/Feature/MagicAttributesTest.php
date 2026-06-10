@@ -6,32 +6,31 @@ use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusEnum;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestModel;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestModelWithAttributes;
 
-describe('Magic Attribute Access - String Categories', function () {
-    beforeEach(function () {
+describe('Magic Attribute Access - String Categories', function (): void {
+    beforeEach(function (): void {
         Tag::createCategory('Status', singleSelect: true)
             ->addChildren(['pending', 'complete', 'archived']);
 
         $this->model = TestModelWithAttributes::create(['name' => 'Test']);
     });
 
-    it('can get tag value as property', function () {
+    it('can get tag value as property', function (): void {
         $this->model->setTag('status', 'pending');
 
         expect($this->model->status)->toBe('pending');
     });
 
-    it('can set tag value as property', function () {
+    it('can set tag value as property', function (): void {
         $this->model->status = 'complete';
 
         expect($this->model->getTagValueIn('status'))->toBe('complete');
     });
 
-    it('returns null when no tag set', function () {
+    it('returns null when no tag set', function (): void {
         expect($this->model->status)->toBeNull();
     });
 
-    it('replaces existing value on set', function () {
-        $this->model->status = 'pending';
+    it('replaces existing value on set', function (): void {
         $this->model->status = 'complete';
 
         expect($this->model->status)->toBe('complete')
@@ -39,8 +38,8 @@ describe('Magic Attribute Access - String Categories', function () {
     });
 });
 
-describe('Magic Attribute Access - TagDefinition Backed', function () {
-    beforeEach(function () {
+describe('Magic Attribute Access - TagDefinition Backed', function (): void {
+    beforeEach(function (): void {
         // Ensure the definition tag exists
         StatusDefinition::tag();
         StatusDefinition::valueTag(StatusEnum::PENDING);
@@ -49,27 +48,27 @@ describe('Magic Attribute Access - TagDefinition Backed', function () {
         $this->model = TestModelWithAttributes::create(['name' => 'Test']);
     });
 
-    it('can get typed enum value as property', function () {
+    it('can get typed enum value as property', function (): void {
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::PENDING);
 
         expect($this->model->priority)->toBe(StatusEnum::PENDING);
     });
 
-    it('can set enum value as property', function () {
+    it('can set enum value as property', function (): void {
         $this->model->priority = StatusEnum::APPROVED;
 
         expect($this->model->getTagAs(StatusDefinition::class))->toBe(StatusEnum::APPROVED);
     });
 
-    it('can set string value that maps to enum', function () {
+    it('can set string value that maps to enum', function (): void {
         $this->model->priority = 'pending';
 
         expect($this->model->getTagAs(StatusDefinition::class))->toBe(StatusEnum::PENDING);
     });
 });
 
-describe('Magic Attributes - Non-Tag Attributes', function () {
-    it('does not interfere with regular model attributes', function () {
+describe('Magic Attributes - Non-Tag Attributes', function (): void {
+    it('does not interfere with regular model attributes', function (): void {
         $model = TestModelWithAttributes::create(['name' => 'Original']);
 
         expect($model->name)->toBe('Original');
@@ -78,7 +77,7 @@ describe('Magic Attributes - Non-Tag Attributes', function () {
         expect($model->name)->toBe('Updated');
     });
 
-    it('does not interfere with model without tagAttributes', function () {
+    it('does not interfere with model without tagAttributes', function (): void {
         $model = TestModel::create(['name' => 'Test']);
 
         expect($model->name)->toBe('Test');

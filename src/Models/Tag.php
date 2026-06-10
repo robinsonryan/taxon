@@ -52,7 +52,7 @@ class Tag extends Model
 
     protected static function booted(): void
     {
-        static::creating(function (Tag $tag) {
+        static::creating(function (Tag $tag): void {
             if (empty($tag->slug)) {
                 $tag->slug = Str::slug($tag->name);
             }
@@ -76,13 +76,13 @@ class Tag extends Model
     |--------------------------------------------------------------------------
     */
 
-    /** @return BelongsTo<Tag, $this> */
+    /** @return BelongsTo<static, $this> */
     public function parent(): BelongsTo
     {
         return $this->belongsTo(static::class, 'parent_id');
     }
 
-    /** @return HasMany<Tag, $this> */
+    /** @return HasMany<static, $this> */
     public function children(): HasMany
     {
         return $this->hasMany(static::class, 'parent_id');
@@ -238,7 +238,7 @@ class Tag extends Model
     /** @return Collection<int, static> */
     public function addChildren(array $names): Collection
     {
-        return collect($names)->map(fn ($name) => $this->addChild($name));
+        return collect($names)->map(fn (string $name): static => $this->addChild($name));
     }
 
     /**
@@ -306,6 +306,6 @@ class Tag extends Model
     public function totalTaggablesCount(): int
     {
         return $this->taggablesCount() +
-            $this->children->sum(fn (Tag $child) => $child->totalTaggablesCount());
+            $this->children->sum(fn (Tag $child): int => $child->totalTaggablesCount());
     }
 }

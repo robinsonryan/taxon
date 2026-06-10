@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RobinsonRyan\Taxon\Exceptions;
 
 use BackedEnum;
@@ -13,7 +15,7 @@ class InvalidTransitionException extends Exception
         public readonly ?BackedEnum $from,
         public readonly BackedEnum $to,
     ) {
-        $fromLabel = $from?->value ?? 'none';
+        $fromLabel = $from->value ?? 'none';
 
         parent::__construct(
             "Cannot transition from '{$fromLabel}' to '{$to->value}'."

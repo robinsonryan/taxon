@@ -7,7 +7,7 @@ use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusEnum;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestModel;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestOrganization;
 
-beforeEach(function () {
+beforeEach(function (): void {
     $this->orgA = TestOrganization::create(['name' => 'Org A']);
     $this->orgB = TestOrganization::create(['name' => 'Org B']);
 
@@ -20,15 +20,15 @@ beforeEach(function () {
     $this->model = TestModel::create(['name' => 'Test']);
 });
 
-describe('Scoped setTag', function () {
-    it('sets a tag within a scope', function () {
+describe('Scoped setTag', function (): void {
+    it('sets a tag within a scope', function (): void {
         $this->model->setTag('status', 'pending', $this->orgA);
 
         expect($this->model->getTagIn('status', $this->orgA))->not->toBeNull()
             ->and($this->model->getTagIn('status', $this->orgA)->slug)->toBe('pending');
     });
 
-    it('keeps tags independent across scopes', function () {
+    it('keeps tags independent across scopes', function (): void {
         $this->model->setTag('status', 'pending', $this->orgA);
         $this->model->setTag('status', 'complete', $this->orgB);
 
@@ -36,7 +36,7 @@ describe('Scoped setTag', function () {
             ->and($this->model->getTagValueIn('status', $this->orgB))->toBe('complete');
     });
 
-    it('replaces tag only in the targeted scope', function () {
+    it('replaces tag only in the targeted scope', function (): void {
         $this->model->setTag('status', 'pending', $this->orgA);
         $this->model->setTag('status', 'complete', $this->orgB);
 
@@ -46,42 +46,42 @@ describe('Scoped setTag', function () {
             ->and($this->model->getTagValueIn('status', $this->orgB))->toBe('complete');
     });
 
-    it('scoped tags do not appear in unscoped queries', function () {
+    it('scoped tags do not appear in unscoped queries', function (): void {
         $this->model->setTag('status', 'pending', $this->orgA);
 
         expect($this->model->getTagIn('status'))->toBeNull();
     });
 
-    it('unscoped tags do not appear in scoped queries', function () {
+    it('unscoped tags do not appear in scoped queries', function (): void {
         $this->model->setTag('status', 'pending');
 
         expect($this->model->getTagIn('status', $this->orgA))->toBeNull();
     });
 });
 
-describe('Scoped addTag', function () {
-    it('adds tag in a specific scope', function () {
+describe('Scoped addTag', function (): void {
+    it('adds tag in a specific scope', function (): void {
         $this->model->addTag('roles', 'admin', $this->orgA);
 
         expect($this->model->tagsIn('roles', $this->orgA))->toHaveCount(1)
             ->and($this->model->tagsIn('roles', $this->orgA)->first()->slug)->toBe('admin');
     });
 
-    it('accumulates tags within a scope', function () {
+    it('accumulates tags within a scope', function (): void {
         $this->model->addTag('roles', 'admin', $this->orgA);
         $this->model->addTag('roles', 'editor', $this->orgA);
 
         expect($this->model->tagsIn('roles', $this->orgA))->toHaveCount(2);
     });
 
-    it('does not duplicate tags within the same scope', function () {
+    it('does not duplicate tags within the same scope', function (): void {
         $this->model->addTag('roles', 'admin', $this->orgA);
         $this->model->addTag('roles', 'admin', $this->orgA);
 
         expect($this->model->tagsIn('roles', $this->orgA))->toHaveCount(1);
     });
 
-    it('allows the same tag in different scopes', function () {
+    it('allows the same tag in different scopes', function (): void {
         $this->model->addTag('roles', 'admin', $this->orgA);
         $this->model->addTag('roles', 'admin', $this->orgB);
 
@@ -89,15 +89,15 @@ describe('Scoped addTag', function () {
             ->and($this->model->tagsIn('roles', $this->orgB))->toHaveCount(1);
     });
 
-    it('can add multiple tags at once with scope', function () {
+    it('can add multiple tags at once with scope', function (): void {
         $this->model->addTags('roles', ['admin', 'editor'], $this->orgA);
 
         expect($this->model->tagsIn('roles', $this->orgA))->toHaveCount(2);
     });
 });
 
-describe('Scoped removeTag', function () {
-    it('removes a tag only from the targeted scope', function () {
+describe('Scoped removeTag', function (): void {
+    it('removes a tag only from the targeted scope', function (): void {
         $this->model->addTag('roles', 'admin', $this->orgA);
         $this->model->addTag('roles', 'admin', $this->orgB);
 
@@ -107,7 +107,7 @@ describe('Scoped removeTag', function () {
             ->and($this->model->tagsIn('roles', $this->orgB))->toHaveCount(1);
     });
 
-    it('removes all tags in category only from the targeted scope', function () {
+    it('removes all tags in category only from the targeted scope', function (): void {
         $this->model->addTags('roles', ['admin', 'editor'], $this->orgA);
         $this->model->addTags('roles', ['admin', 'viewer'], $this->orgB);
 
@@ -118,30 +118,30 @@ describe('Scoped removeTag', function () {
     });
 });
 
-describe('Scoped hasTagIn checks', function () {
-    beforeEach(function () {
+describe('Scoped hasTagIn checks', function (): void {
+    beforeEach(function (): void {
         $this->model->addTag('roles', 'admin', $this->orgA);
         $this->model->addTags('roles', ['editor', 'viewer'], $this->orgB);
     });
 
-    it('checks if model has tag in scoped category', function () {
+    it('checks if model has tag in scoped category', function (): void {
         expect($this->model->hasTagIn('roles', 'admin', $this->orgA))->toBeTrue()
             ->and($this->model->hasTagIn('roles', 'admin', $this->orgB))->toBeFalse();
     });
 
-    it('checks hasAnyTagIn with scope', function () {
+    it('checks hasAnyTagIn with scope', function (): void {
         expect($this->model->hasAnyTagIn('roles', ['admin', 'editor'], $this->orgA))->toBeTrue()
             ->and($this->model->hasAnyTagIn('roles', ['viewer', 'editor'], $this->orgA))->toBeFalse();
     });
 
-    it('checks hasAllTagsIn with scope', function () {
+    it('checks hasAllTagsIn with scope', function (): void {
         expect($this->model->hasAllTagsIn('roles', ['editor', 'viewer'], $this->orgB))->toBeTrue()
             ->and($this->model->hasAllTagsIn('roles', ['admin', 'editor'], $this->orgB))->toBeFalse();
     });
 });
 
-describe('Scoped query scopes', function () {
-    beforeEach(function () {
+describe('Scoped query scopes', function (): void {
+    beforeEach(function (): void {
         $this->m1 = TestModel::create(['name' => 'M1']);
         $this->m2 = TestModel::create(['name' => 'M2']);
         $this->m3 = TestModel::create(['name' => 'M3']);
@@ -152,21 +152,21 @@ describe('Scoped query scopes', function () {
         $this->m3->setTag('status', 'pending');
     });
 
-    it('scopes withTagIn by scope', function () {
+    it('scopes withTagIn by scope', function (): void {
         $models = TestModel::withTagIn('status', 'pending', $this->orgA)->get();
 
         expect($models)->toHaveCount(1)
             ->and($models->first()->name)->toBe('M1');
     });
 
-    it('scopes withAnyTagIn by scope', function () {
+    it('scopes withAnyTagIn by scope', function (): void {
         $models = TestModel::withAnyTagIn('status', ['pending', 'complete'], $this->orgA)->get();
 
         expect($models)->toHaveCount(2)
             ->and($models->pluck('name')->toArray())->toContain('M1', 'M2');
     });
 
-    it('scopes withoutTagIn by scope', function () {
+    it('scopes withoutTagIn by scope', function (): void {
         // M2 and M3 don't have 'pending' in orgA, plus the base $this->model
         $models = TestModel::withoutTagIn('status', 'pending', $this->orgA)->get();
 
@@ -174,19 +174,19 @@ describe('Scoped query scopes', function () {
     });
 });
 
-describe('Scoped TagDefinition methods', function () {
-    beforeEach(function () {
+describe('Scoped TagDefinition methods', function (): void {
+    beforeEach(function (): void {
         $this->model = TestModel::create(['name' => 'Def Test']);
     });
 
-    it('sets tag via definition with scope', function () {
+    it('sets tag via definition with scope', function (): void {
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
 
         expect($this->model->getTagAs(StatusDefinition::class, $this->orgA))->toBe(StatusEnum::PENDING)
             ->and($this->model->getTagAs(StatusDefinition::class))->toBeNull();
     });
 
-    it('keeps definition tags independent across scopes', function () {
+    it('keeps definition tags independent across scopes', function (): void {
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::APPROVED, $this->orgB);
 
@@ -194,7 +194,7 @@ describe('Scoped TagDefinition methods', function () {
             ->and($this->model->getTagAs(StatusDefinition::class, $this->orgB))->toBe(StatusEnum::APPROVED);
     });
 
-    it('replaces definition tag only in targeted scope', function () {
+    it('replaces definition tag only in targeted scope', function (): void {
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::APPROVED, $this->orgB);
 
@@ -204,7 +204,7 @@ describe('Scoped TagDefinition methods', function () {
             ->and($this->model->getTagAs(StatusDefinition::class, $this->orgB))->toBe(StatusEnum::APPROVED);
     });
 
-    it('checks hasTagAs with scope', function () {
+    it('checks hasTagAs with scope', function (): void {
         $this->model->setTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
 
         expect($this->model->hasTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA))->toBeTrue()
@@ -212,7 +212,7 @@ describe('Scoped TagDefinition methods', function () {
             ->and($this->model->hasTagAs(StatusDefinition::class, StatusEnum::PENDING))->toBeFalse();
     });
 
-    it('adds tag via definition with scope without duplicating', function () {
+    it('adds tag via definition with scope without duplicating', function (): void {
         $this->model->addTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
         $this->model->addTagAs(StatusDefinition::class, StatusEnum::PENDING, $this->orgA);
 
@@ -228,12 +228,12 @@ describe('Scoped TagDefinition methods', function () {
     });
 });
 
-describe('CanScopeTags trait', function () {
-    it('returns morph class as scope type', function () {
+describe('CanScopeTags trait', function (): void {
+    it('returns morph class as scope type', function (): void {
         expect($this->orgA->getScopeType())->toBe($this->orgA->getMorphClass());
     });
 
-    it('returns model key as scope id', function () {
+    it('returns model key as scope id', function (): void {
         expect($this->orgA->getScopeId())->toBe($this->orgA->getKey());
     });
 });

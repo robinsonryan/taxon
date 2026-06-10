@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RobinsonRyan\Taxon\Tests\Fixtures\Models;
 
 use Illuminate\Database\Eloquent\Model;

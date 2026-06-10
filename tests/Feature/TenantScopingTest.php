@@ -3,13 +3,13 @@
 use Illuminate\Database\QueryException;
 use RobinsonRyan\Taxon\Models\Tag;
 
-describe('Tenant Scoping', function () {
-    beforeEach(function () {
+describe('Tenant Scoping', function (): void {
+    beforeEach(function (): void {
         config()->set('taxon.tenant.enabled', true);
         config()->set('taxon.tenant.column', 'tenant_id');
     });
 
-    it('creates tags with tenant_id', function () {
+    it('creates tags with tenant_id', function (): void {
         $tag = Tag::create([
             'name' => 'Tenant Tag',
             'tenant_id' => '1',
@@ -18,14 +18,14 @@ describe('Tenant Scoping', function () {
         expect($tag->tenant_id)->toBe('1');
     });
 
-    it('separates tags by tenant', function () {
+    it('separates tags by tenant', function (): void {
         Tag::create(['name' => 'Shared Name', 'tenant_id' => '1']);
         Tag::create(['name' => 'Shared Name', 'tenant_id' => '2']);
 
         expect(Tag::where('name', 'Shared Name')->count())->toBe(2);
     });
 
-    it('enforces uniqueness within tenant for child tags', function () {
+    it('enforces uniqueness within tenant for child tags', function (): void {
         $parent = Tag::createCategory('Status', tenantId: '1');
 
         $parent->addChild('active');
@@ -34,14 +34,14 @@ describe('Tenant Scoping', function () {
         Tag::create(['name' => 'Active', 'slug' => 'active', 'parent_id' => $parent->id, 'tenant_id' => '1']);
     })->throws(QueryException::class);
 
-    it('allows same slug in different tenants', function () {
+    it('allows same slug in different tenants', function (): void {
         $tag1 = Tag::create(['name' => 'Status', 'tenant_id' => '1']);
         $tag2 = Tag::create(['name' => 'Status', 'tenant_id' => '2']);
 
         expect($tag1->id)->not->toBe($tag2->id);
     });
 
-    it('scopes category children by tenant', function () {
+    it('scopes category children by tenant', function (): void {
         $cat1 = Tag::createCategory('Status', tenantId: '1');
         $cat1->addChild('Active');
 
@@ -56,12 +56,12 @@ describe('Tenant Scoping', function () {
     });
 });
 
-describe('Global Tags', function () {
-    beforeEach(function () {
+describe('Global Tags', function (): void {
+    beforeEach(function (): void {
         config()->set('taxon.tenant.enabled', true);
     });
 
-    it('creates global tags with null tenant_id', function () {
+    it('creates global tags with null tenant_id', function (): void {
         $tag = Tag::create([
             'name' => 'Global Tag',
             'tenant_id' => null,
@@ -70,8 +70,8 @@ describe('Global Tags', function () {
         expect($tag->tenant_id)->toBeNull();
     });
 
-    it('global child tags are unique within parent', function () {
-        $parent = Tag::createCategory('System', tenantId: null);
+    it('global child tags are unique within parent', function (): void {
+        $parent = Tag::createCategory('System');
         $child = $parent->addChild('config');
 
         // Verify child was created correctly

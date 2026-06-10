@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RobinsonRyan\Taxon\Tests\Fixtures\Definitions;
 
 use RobinsonRyan\Taxon\TagDefinition;

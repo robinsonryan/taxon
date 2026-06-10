@@ -159,7 +159,7 @@ abstract class TagDefinition
     {
         $values = static::values();
 
-        if (empty($values)) {
+        if ($values === []) {
             return true;
         }
 

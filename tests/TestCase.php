@@ -48,7 +48,7 @@ abstract class TestCase extends Orchestra
     {
         $useUuid = config('taxon.id_type') === 'uuid7';
 
-        Schema::create('test_models', function (Blueprint $table) use ($useUuid) {
+        Schema::create('test_models', function (Blueprint $table) use ($useUuid): void {
             if ($useUuid) {
                 $table->uuid('id')->primary();
             } else {
@@ -59,7 +59,7 @@ abstract class TestCase extends Orchestra
             $table->timestamps();
         });
 
-        Schema::create('test_users', function (Blueprint $table) use ($useUuid) {
+        Schema::create('test_users', function (Blueprint $table) use ($useUuid): void {
             if ($useUuid) {
                 $table->uuid('id')->primary();
             } else {
@@ -72,7 +72,7 @@ abstract class TestCase extends Orchestra
             $table->timestamps();
         });
 
-        Schema::create('test_organizations', function (Blueprint $table) use ($useUuid) {
+        Schema::create('test_organizations', function (Blueprint $table) use ($useUuid): void {
             if ($useUuid) {
                 $table->uuid('id')->primary();
             } else {

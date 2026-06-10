@@ -19,7 +19,7 @@ trait ConfiguresIdentifiers
     protected static function bootConfiguresIdentifiers(): void
     {
         if (config('taxon.id_type') === 'uuid7') {
-            static::creating(function ($model) {
+            static::creating(function ($model): void {
                 if (empty($model->{$model->getKeyName()})) {
                     $model->{$model->getKeyName()} = Str::uuid7()->toString();
                 }

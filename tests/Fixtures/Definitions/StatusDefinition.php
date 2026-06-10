@@ -47,7 +47,7 @@ class StatusDefinition extends TagDefinition
 
     public function canTransition(Model $model, ?StatusEnum $from, StatusEnum $to, $user = null): bool
     {
-        if ($from === null) {
+        if (! $from instanceof StatusEnum) {
             return $to === static::default();
         }
 
@@ -58,11 +58,7 @@ class StatusDefinition extends TagDefinition
         }
 
         // Example: only admins can approve
-        if ($to === StatusEnum::APPROVED && $user && ! $user->isAdmin()) {
-            return false;
-        }
-
-        return true;
+        return ! ($to === StatusEnum::APPROVED && $user && ! $user->isAdmin());
     }
 
     public function availableTransitions(Model $model, $user = null): array
@@ -77,7 +73,7 @@ class StatusDefinition extends TagDefinition
 
         return array_filter(
             $possible,
-            fn (StatusEnum $status) => $this->canTransition($model, $current, $status, $user)
+            fn (StatusEnum $status): bool => $this->canTransition($model, $current, $status, $user)
         );
     }
 }

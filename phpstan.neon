@@ -8,3 +8,7 @@ parameters:
     ignoreErrors:
         -
             identifier: missingType.iterableValue
+        -
+            # Consumer-facing trait (apps `use CanScopeTags`); never used inside src.
+            identifier: trait.unused
+            path: src/Concerns/CanScopeTags.php
