@@ -4,6 +4,8 @@ namespace RobinsonRyan\Taxon\Tests\Fixtures\Definitions;
 
 use Illuminate\Database\Eloquent\Model;
 use RobinsonRyan\Taxon\TagDefinition;
+use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestModel;
+use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestUser;
 
 class StatusDefinition extends TagDefinition
 {
@@ -25,6 +27,7 @@ class StatusDefinition extends TagDefinition
         return StatusEnum::DRAFT;
     }
 
+    /** @return array<string, list<StatusEnum>> */
     public static function transitions(): array
     {
         return [
@@ -45,7 +48,7 @@ class StatusDefinition extends TagDefinition
         ];
     }
 
-    public function canTransition(Model $model, ?StatusEnum $from, StatusEnum $to, $user = null): bool
+    public function canTransition(Model $model, ?StatusEnum $from, StatusEnum $to, ?TestUser $user = null): bool
     {
         if (! $from instanceof StatusEnum) {
             return $to === static::default();
@@ -61,11 +64,14 @@ class StatusDefinition extends TagDefinition
         return ! ($to === StatusEnum::APPROVED && $user && ! $user->isAdmin());
     }
 
-    public function availableTransitions(Model $model, $user = null): array
+    /** @return array<int, StatusEnum> */
+    public function availableTransitions(TestModel $model, ?TestUser $user = null): array
     {
         $current = $model->getTagAs(static::class);
 
-        if ($current === null) {
+        // getTagAs() returns the raw slug for database-backed definitions; this one is
+        // enum-backed, so anything that is not a StatusEnum means "no state set yet".
+        if (! $current instanceof StatusEnum) {
             return [static::default()];
         }
 

@@ -3,8 +3,8 @@
 use RobinsonRyan\Taxon\Models\Tag;
 
 describe('UUID7 Support', function (): void {
-    // Note: UUID7 tests require special database setup
-    // These tests verify the configuration option works
+    // These assert the ConfiguresIdentifiers trait reads `taxon.id_type`; no database
+    // rows are written, so no schema rebuild is involved.
     it('ConfiguresIdentifiers trait responds to uuid7 config', function (): void {
         config()->set('taxon.id_type', 'uuid7');
 
@@ -22,7 +22,7 @@ describe('UUID7 Support', function (): void {
         expect($tag->getIncrementing())->toBeTrue()
             ->and($tag->getKeyType())->toBe('int');
     });
-})->skip(message: 'UUID7 database tests require full schema rebuild');
+});
 
 describe('Incrementing ID (Default)', function (): void {
     it('creates tags with incrementing IDs by default', function (): void {

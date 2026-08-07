@@ -18,6 +18,7 @@ class TestModelWithAttributes extends Model
 
     protected $guarded = [];
 
+    /** @var array<int|string, string> */
     protected array $tagAttributes = [
         'status',                              // string-based category
         'priority' => StatusDefinition::class, // definition-backed

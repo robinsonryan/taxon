@@ -235,7 +235,10 @@ class Tag extends Model
         );
     }
 
-    /** @return Collection<int, static> */
+    /**
+     * @param  array<int, string>  $names
+     * @return Collection<int, static>
+     */
     public function addChildren(array $names): Collection
     {
         return collect($names)->map(fn (string $name): static => $this->addChild($name));
