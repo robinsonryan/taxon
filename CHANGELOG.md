@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-08
+
 ### Added
 - **`taxon.taggable_id_type` config key** (default `null`). `id_type` governs Taxon's
   own primary keys; `taggables.taggable_id` holds the *host application's* keys, and
