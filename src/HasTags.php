@@ -181,8 +181,6 @@ trait HasTags
 
     protected function deleteScopedPivotRecord(int|string $tagId, ?Scope $scope): void
     {
-        config('taxon.tables.taggables', 'taggables');
-
         $pivotQuery = $this->tags()->newPivotStatement()
             ->where('tag_id', $tagId)
             ->where('taggable_type', $this->getMorphClass())
