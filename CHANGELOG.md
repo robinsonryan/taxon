@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-08
+
+Tooling and type-annotation release. **No runtime behaviour changed** — the only
+`src/` edit since 2.0.0 is a docblock, so this is a safe drop-in for any 2.0.0
+consumer.
+
 ### Added
-- Initial package scaffolding
 - `composer quality` now gates Rector (`@refactor:check`) alongside Pint, PHPStan and Pest.
 
 ### Changed
