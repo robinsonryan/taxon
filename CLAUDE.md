@@ -63,14 +63,23 @@ Full definition: `imports/package-quality-gate.md`. Skill: `/package-quality`.
 
 ## Testing
 
-Pest + Orchestra Testbench. **Unlike the reference package, this suite runs on
-SQLite `:memory:`, not Postgres** — see `tests/TestCase.php::getEnvironmentSetUp`.
-It can: Taxon generates UUIDv7 in PHP (`Str::uuid7()` in `ConfiguresIdentifiers`)
-rather than leaning on a `uuidv7()` column default, so no Postgres feature is
-required. DDEV still runs a Postgres 18 `db` service; the suite does not touch it.
+Pest + Orchestra Testbench, on **real PostgreSQL** — the DDEV `db` service, in a
+database of its own named `testing`, created by a `post-start` hook in
+`.ddev/config.yaml`. Every value is overridable via `TAXON_TEST_DB_*` env vars;
+see `tests/TestCase.php::getEnvironmentSetUp`. This matches the reference package.
 
-That is a **coverage hole, not a design choice you should copy** — see the
-`uuidMorphs` gotcha below for a bug class SQLite's loose typing hides.
+The suite uses `RefreshDatabase`, so migrations run **once** and each test is
+wrapped in a transaction that rolls back. Two consequences worth knowing:
+
+- Tests share one database. A test that assumes a pristine schema, or that commits,
+  will leak into its neighbours. Nothing currently does; keep it that way.
+- Sequences are **not** rolled back, so auto-increment ids keep climbing across the
+  run. Never assert on a literal id value.
+
+The package migrations are registered with the migrator from `TestCase` (the
+service provider only *publishes* them), alongside the fixture consumer tables in
+`tests/Fixtures/database/migrations/`. Registering the path — rather than calling
+`loadMigrationsFrom()` — is what keeps Testbench from rebuilding the schema per test.
 
 ```bash
 ddev composer test
@@ -216,10 +225,13 @@ Postgres and reject integer keys on insert.
 
 **Anything about column *types* must be tested on Postgres, not SQLite.** SQLite
 compiles `uuid`, `bigint` and `varchar` down to the same loose affinity, which is
-exactly how the bug above shipped. `tests/Feature/PostgresTaggableIdTypeTest.php`
-runs the published migrations against the DDEV Postgres service and reads
-`information_schema` directly; it is the only test in the suite that can see a
-column type at all.
+exactly how the bug above shipped. The whole suite now runs on Postgres, so that
+blindness is gone by default. `tests/Feature/PostgresTaggableIdTypeTest.php`
+remains separate because it exercises the migrations under *non-default*
+`id_type` / `taggable_id_type` combinations: it needs to drop and recreate `tags`
+and `taggables`, which would destroy the schema `RefreshDatabase` migrated once
+for everyone else. It therefore works in the `db` database on its own connection,
+never in `testing`.
 
 **A self-referencing foreign key needs its primary key declared explicitly.**
 `$table->uuid('id')->primary()` compiles the primary key into a command appended

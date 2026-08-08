@@ -12,12 +12,18 @@ use Illuminate\Support\Str;
 | Why this file talks to a real PostgreSQL server
 |--------------------------------------------------------------------------
 |
-| The rest of the suite runs on SQLite :memory:, where every one of the column
-| types below compiles down to a loosely typed `varchar` and an integer written
-| into a "uuid" column is silently accepted. That blindness is precisely how a
-| `uuid`-typed `taggable_id` shipped as the default schema. These assertions only
-| carry information against a driver with real column types, so they run against
-| the DDEV PostgreSQL service and skip — loudly — anywhere else.
+| The rest of the suite also runs on PostgreSQL now, but it runs under the SHIPPED
+| default configuration, against a schema RefreshDatabase migrates exactly once.
+| This file is the one that varies `id_type` / `taggable_id_type`, which means
+| dropping and recreating `tags` and `taggables` per case — destructive to that
+| shared schema. So it works on its own connection, in the `db` database rather
+| than `testing`, and reads `information_schema` directly: no Laravel type mapping
+| in between. It skips — loudly — where no PostgreSQL server is reachable.
+|
+| Column types are what is on trial here, and they are unfalsifiable on SQLite,
+| where `uuid`, `bigint` and `varchar` all collapse to the same loose affinity.
+| That blindness is precisely how a `uuid`-typed `taggable_id` shipped as the
+| default schema.
 |
 */
 

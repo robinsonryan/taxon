@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The test suite runs on real PostgreSQL**, not SQLite `:memory:`. It uses the DDEV
+  `db` service in a database of its own (`testing`), created by a `post-start` hook,
+  with every connection value overridable via `TAXON_TEST_DB_*`. SQLite collapses
+  `uuid`, `bigint` and `varchar` into one loose affinity, so it could not see the
+  column-type bug fixed in 0.3.0 — and could not have caught the next one either.
+  Contributor-facing only; no packaged code changed, and all 125 tests pass unmodified.
+  The suite now uses `RefreshDatabase` (migrations once, a transaction per test) and
+  the fixture consumer tables moved from inline `Schema::create()` calls in `TestCase`
+  into `tests/Fixtures/database/migrations/`.
+
 ## [0.3.0] - 2026-08-08
 
 ### Added
