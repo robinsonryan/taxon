@@ -13,6 +13,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`taxon.taggable_id_type` config key** (default `null`). `id_type` governs Taxon's
+  own primary keys; `taggables.taggable_id` holds the *host application's* keys, and
+  the two need not match. `null` means "follow `id_type`", so no existing consumer
+  sees a change — set it only for a mixed app (UUID7 tags over integer-keyed models,
+  or the reverse), which previously had no correct configuration at all.
+- **First PostgreSQL-backed test** (`tests/Feature/PostgresTaggableIdTypeTest.php`).
+  Column *types* are unfalsifiable on SQLite — `uuid`, `bigint` and `varchar` all
+  collapse to the same loose affinity — which is how the bug below shipped. This
+  file runs the published migrations against the DDEV Postgres service and reads
+  `information_schema` directly. It skips, loudly, where no Postgres is reachable.
+
+### Fixed
+- **`taggables.taggable_id` is no longer a `uuid` column when `id_type` is
+  `incrementing`.** The migration branched on `id_type` for every key column except
+  the polymorphic one, where it called `uuidMorphs('taggable')` unconditionally. With
+  the shipped default on PostgreSQL that produced a real `uuid` column, so tagging any
+  integer-keyed model failed on insert (`invalid input syntax for type uuid`). It now
+  emits `morphs()` or `uuidMorphs()` per `taggable_id_type`.
+
+  A consumer running `id_type => 'uuid7'` is unaffected — the emitted schema is byte
+  for byte what it was.
+
+  **Existing consumers on the default `incrementing`:** migrations are published, so
+  your copy in `database/migrations/` is untouched by this release. Re-publish it
+  (`--tag=taxon-migrations --force`) for a fresh install, or, if the broken table is
+  already live on PostgreSQL, write a migration altering `taggable_id` to `bigint`.
+  On MySQL or SQLite nothing is required: `uuidMorphs` degraded to a string column
+  there and integer keys were being stored without complaint.
+- **The `uuid7` migration branch could not run on PostgreSQL at all.**
+  `$table->uuid('id')->primary()` compiles the primary key into a command emitted
+  *after* the self-referencing `parent_id` foreign key, and PostgreSQL rejects a
+  foreign key whose target carries no unique constraint yet ("there is no unique
+  constraint matching given keys for referenced table"). The `tags` migration now
+  declares `$table->primary('id')` as its own statement, ahead of the foreign key.
+  SQLite hid this by folding foreign keys into the create statement.
+
 ### Changed
 - **Dropped Laravel 11 support — BREAKING for any consumer pinned to Laravel 11.**
   `illuminate/contracts`, `illuminate/database` and `illuminate/support` narrow from

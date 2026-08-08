@@ -13,9 +13,19 @@ return new class extends Migration
         $tenantColumn = config('taxon.tenant.column', 'tenant_id');
         $useUuid = config('taxon.id_type') === 'uuid7';
 
+        // `id_type` describes Taxon's OWN keys; `taggable_id` holds the host
+        // application's keys, which need not be the same type. Null means "follow
+        // id_type", which is what every existing consumer gets.
+        $taggableUsesUuid = (config('taxon.taggable_id_type') ?? config('taxon.id_type')) === 'uuid7';
+
         Schema::create($tagTable, function (Blueprint $table) use ($tagTable, $tenantColumn, $useUuid) {
             if ($useUuid) {
-                $table->uuid('id')->primary();
+                $table->uuid('id');
+                // Declared explicitly rather than fluently as ->primary(): a fluent
+                // primary key is compiled into a command appended AFTER the
+                // self-referencing parent_id foreign key below, and PostgreSQL
+                // rejects a foreign key whose target has no unique constraint yet.
+                $table->primary('id');
             } else {
                 $table->id();
             }
@@ -45,7 +55,7 @@ return new class extends Migration
             $table->unique(['slug', 'parent_id', $tenantColumn], 'tags_unique_slug_parent_tenant');
         });
 
-        Schema::create($pivotTable, function (Blueprint $table) use ($tagTable, $tenantColumn, $useUuid) {
+        Schema::create($pivotTable, function (Blueprint $table) use ($tagTable, $tenantColumn, $useUuid, $taggableUsesUuid) {
             if ($useUuid) {
                 $table->uuid('id')->primary();
                 $table->uuid('tag_id');
@@ -60,7 +70,12 @@ return new class extends Migration
                     ->cascadeOnDelete();
             }
 
-            $table->uuidMorphs('taggable');
+            if ($taggableUsesUuid) {
+                $table->uuidMorphs('taggable');
+            } else {
+                $table->morphs('taggable');
+            }
+
             $table->string($tenantColumn)->nullable()->index();
             $table->timestamps();
 

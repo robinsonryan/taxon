@@ -205,13 +205,28 @@ collision with a real column silently shadows the column. See
 pattern (`$role->tag(['users.create'])`), not an accident. It also means `Tag`
 inherits the `getAttribute` override.
 
-**`taggable_id` is a `uuid` column *unconditionally*.** The migration calls
-`$table->uuidMorphs('taggable')` regardless of `taxon.id_type`. On SQLite that
-compiles to `varchar`, so the suite is happy with integer-keyed models. On
-**Postgres it compiles to a real `uuid` type**, so the default
-`id_type => 'incrementing'` plus a Postgres host means inserting an
-integer-keyed model's pivot row fails. No test covers this — the suite is
-SQLite-only. Verify before telling anyone incrementing IDs work on Postgres.
+**`taggable_id` follows `taxon.taggable_id_type`, not `taxon.id_type`.**
+`id_type` governs Taxon's *own* primary keys (`tags.id`, `taggables.id`);
+`taggable_id` holds the *host application's* keys, which need not be the same
+type. `taggable_id_type` is `null` by default, meaning "follow `id_type`" — set
+it only for a mixed app (uuid7 tags over integer-keyed models, or the reverse).
+Until 2026-08-08 the migration called `uuidMorphs('taggable')` unconditionally,
+which made the shipped default (`incrementing`) emit a real `uuid` column on
+Postgres and reject integer keys on insert.
+
+**Anything about column *types* must be tested on Postgres, not SQLite.** SQLite
+compiles `uuid`, `bigint` and `varchar` down to the same loose affinity, which is
+exactly how the bug above shipped. `tests/Feature/PostgresTaggableIdTypeTest.php`
+runs the published migrations against the DDEV Postgres service and reads
+`information_schema` directly; it is the only test in the suite that can see a
+column type at all.
+
+**A self-referencing foreign key needs its primary key declared explicitly.**
+`$table->uuid('id')->primary()` compiles the primary key into a command appended
+*after* the `foreign('parent_id')` command, so Postgres rejects the FK — its
+target has no unique constraint yet. The `tags` migration therefore calls
+`$table->primary('id')` as its own statement. SQLite hides this too (it folds
+foreign keys into the create).
 
 **`config('taxon.tag_model')` is honored in exactly one place** —
 `HasTags::tags()`, when building the `morphToMany`. Every other write path
