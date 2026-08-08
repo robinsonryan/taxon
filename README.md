@@ -13,7 +13,7 @@ A flexible hierarchical tagging system for Laravel with tenant scoping and tag d
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11.x or 12.x
+- Laravel 12.x or 13.x
 
 ## Installation
 

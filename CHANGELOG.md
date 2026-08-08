@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Dropped Laravel 11 support — BREAKING for any consumer pinned to Laravel 11.**
+  `illuminate/contracts`, `illuminate/database` and `illuminate/support` narrow from
+  `^11.0|^12.0|^13.0` to `^12.0|^13.0`, and `orchestra/testbench` from
+  `^9.0|^10.0|^11.0` to `^10.0|^11.0` (Testbench 9 *is* the Laravel 11 harness, so
+  leaving it declared a test matrix that can no longer resolve).
+
+  Laravel 11 was advertised but structurally untestable, and had never been verified
+  against a single test run. The package requires `pestphp/pest ^4.0`, Pest 4 requires
+  PHPUnit 12, and Testbench 9 caps at PHPUnit 11 — so Composer could never assemble a
+  Laravel 11 install here. The `^11.0` was a compatibility promise nobody could keep;
+  removing it makes the declared support match what the suite actually exercises.
+
+  No runtime code changed. A consumer already on Laravel 12 or 13 is unaffected.
+
 ## [0.2.1] - 2026-08-08
 
 Tooling and type-annotation release. **No runtime behaviour changed** — the only
