@@ -3,6 +3,7 @@
 namespace RobinsonRyan\Taxon;
 
 use BackedEnum;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use ReflectionMethod;
@@ -30,17 +31,37 @@ abstract class TagDefinition
         return null;
     }
 
-    /** @return array<int, string> */
+    /**
+     * The values this definition may hold.
+     *
+     * An enum-backed definition answers from its cases. A database-backed one
+     * answers from the category's children **plus every state its
+     * `transitions()` map declares — a declared state is a value whether or not
+     * a tag for it has been created yet. Without that, a map-declared definition
+     * could not make its second move: the first write creates one child, and
+     * `isValidValue()` would then reject every other state in the map.
+     *
+     * @return array<int, string>
+     */
     public static function values(): array
     {
         if ($enum = static::enum()) {
             return array_map(fn ($case) => $case->value, $enum::cases());
         }
 
-        return static::tag()
+        // Strings are stored slugged, so normalizeState() is the stored form
+        // here — the enum-backing-value case is handled above.
+        $declared = array_map(
+            static::normalizeState(...),
+            static::declaredStates(),
+        );
+
+        $children = static::tag()
             ->children()
             ->pluck('slug')
             ->toArray();
+
+        return array_values(array_unique([...$declared, ...$children]));
     }
 
     public static function valuesMutable(): bool
@@ -166,6 +187,243 @@ abstract class TagDefinition
         $slug = $value instanceof BackedEnum ? $value->value : Str::slug($value);
 
         return in_array($slug, $values);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transitions
+    |--------------------------------------------------------------------------
+    |
+    | A definition declares its state machine here. `transitions()` returning
+    | null means "this definition has no transition guard at all", and
+    | HasTags::transitionTo() refuses to write through it — use setTagAs() when
+    | an unguarded write is what you want.
+    |
+    */
+
+    /**
+     * The allowed target states, keyed by source state value.
+     *
+     * Null means the definition declares no state machine. Keys are state
+     * *values* (an enum's backing value, or a slug); the listed targets may be
+     * either enum cases or strings. Keys are matched the same way targets are —
+     * on the stored value first, then through `normalizeState()` — so a key
+     * written as a human label still names the state it looks like.
+     *
+     * @return array<string, iterable<string|BackedEnum>>|null
+     */
+    public static function transitions(): ?array
+    {
+        return null;
+    }
+
+    /**
+     * The state a model is expected to enter first, before it holds any value
+     * for this definition.
+     *
+     * Null means "no declared initial state", in which case the default guard
+     * lets the first state be any state the `transitions()` map mentions — never
+     * one it has no rules for.
+     */
+    public static function default(): string|BackedEnum|null
+    {
+        return null;
+    }
+
+    /**
+     * Whether this definition guards its transitions at all — either by
+     * declaring a `transitions()` map or by overriding `canTransition()`.
+     */
+    public static function guardsTransitions(): bool
+    {
+        if (static::transitions() !== null) {
+            return true;
+        }
+
+        $reflection = new ReflectionMethod(static::class, 'canTransition');
+
+        return $reflection->getDeclaringClass()->getName() !== self::class;
+    }
+
+    /**
+     * Reduce a state to the value it is stored under — an enum's backing value,
+     * or a slugged string. Guards should compare states through this rather
+     * than with `===`, so `'In Progress'`, `'in-progress'` and the matching enum
+     * case all answer alike.
+     */
+    public static function normalizeState(string|BackedEnum $state): string
+    {
+        return $state instanceof BackedEnum ? (string) $state->value : Str::slug($state);
+    }
+
+    /**
+     * Every state the `transitions()` map mentions — its keys and its targets,
+     * in declaration order, spelled the way the map spells them (an enum target
+     * reduced to its backing value). Empty when no map is declared.
+     *
+     * This is the map's own vocabulary. Use `declaresState()` to test membership:
+     * a map may be keyed by human labels, and those do not compare literally.
+     *
+     * @return list<string>
+     */
+    public static function declaredStates(): array
+    {
+        $transitions = static::transitions();
+
+        if ($transitions === null) {
+            return [];
+        }
+
+        $states = [];
+
+        foreach ($transitions as $from => $targets) {
+            $states[] = $from;
+
+            foreach ($targets as $target) {
+                $states[] = $target instanceof BackedEnum ? (string) $target->value : $target;
+            }
+        }
+
+        return array_values(array_unique($states));
+    }
+
+    /**
+     * Whether the `transitions()` map mentions $state at all, as a source or as
+     * a target.
+     *
+     * Compares on the stored value first and on `normalizeState()` second, the
+     * same two-step the map's keys are looked up by — so an enum case, its
+     * backing value and a human label all find the state they name.
+     */
+    public static function declaresState(string|BackedEnum $state): bool
+    {
+        $stored = $state instanceof BackedEnum ? (string) $state->value : $state;
+        $normalized = static::normalizeState($state);
+
+        foreach (static::declaredStates() as $declared) {
+            if ($declared === $stored || static::normalizeState($declared) === $normalized) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether $model may move from $from to $to.
+     *
+     * The default implementation answers from `transitions()`, and refuses
+     * everything when no map is declared. Override it for guards that need the
+     * model or the user — call `parent::canTransition()` first to keep the map
+     * authoritative and add the extra rule on top.
+     */
+    public function canTransition(
+        Model $model,
+        string|BackedEnum|null $from,
+        string|BackedEnum $to,
+        mixed $user = null,
+    ): bool {
+        if (static::transitions() === null) {
+            return false;
+        }
+
+        if ($from === null) {
+            $default = static::default();
+
+            // With no declared default, the first state is anything the map
+            // knows about. Deferring to isValidValue() here was a hole: a
+            // database-backed definition has no value tags until something is
+            // written, `values()` is therefore empty, and "no declared values"
+            // means "everything is valid" — so the very first write could put
+            // the model into a state the machine has no rules for, with no
+            // transition back out.
+            return $default === null
+                ? static::declaresState($to)
+                : static::normalizeState($default) === static::normalizeState($to);
+        }
+
+        foreach (static::transitionsFrom($from) as $candidate) {
+            if (static::normalizeState($candidate) === static::normalizeState($to)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The map's targets for $from.
+     *
+     * The map's *keys* are matched the same way its targets are: by the stored
+     * value first, then through `normalizeState()`. Writing `'In Progress'` as a
+     * key used to declare a state nothing could ever leave — the lookup key was
+     * normalized, the map's own keys were not. The exact match is tried first so
+     * a backing value that slugging would change (`'in_progress'`) still finds
+     * its own row.
+     *
+     * @return iterable<string|BackedEnum>
+     */
+    protected static function transitionsFrom(string|BackedEnum $from): iterable
+    {
+        $transitions = static::transitions() ?? [];
+        $state = static::normalizeState($from);
+
+        if (isset($transitions[$state])) {
+            return $transitions[$state];
+        }
+
+        foreach ($transitions as $key => $targets) {
+            if (static::normalizeState($key) === $state) {
+                return $targets;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * The states $model may move to right now, in the order the map declares
+     * them, filtered through `canTransition()` so code-level guards apply too.
+     *
+     * @return list<string|BackedEnum>
+     */
+    public function availableTransitions(Model $model, mixed $user = null): array
+    {
+        $from = $this->currentState($model);
+
+        if ($from === null) {
+            $default = static::default();
+
+            return $default !== null && $this->canTransition($model, null, $default, $user)
+                ? [$default]
+                : [];
+        }
+
+        // Without a map there is nothing to enumerate: a definition that guards
+        // only in code can answer canTransition() but cannot list its options.
+        $candidates = static::transitionsFrom($from);
+        $available = [];
+
+        foreach ($candidates as $candidate) {
+            if ($this->canTransition($model, $from, $candidate, $user)) {
+                $available[] = $candidate;
+            }
+        }
+
+        return $available;
+    }
+
+    /** The value $model currently holds for this definition, if it can hold one at all. */
+    protected function currentState(Model $model): string|BackedEnum|null
+    {
+        if (! method_exists($model, 'getTagAs')) {
+            return null;
+        }
+
+        /** @var string|BackedEnum|null $current */
+        $current = $model->getTagAs(static::class);
+
+        return $current;
     }
 
     /*

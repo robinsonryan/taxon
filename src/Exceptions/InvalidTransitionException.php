@@ -12,13 +12,18 @@ class InvalidTransitionException extends Exception
 {
     public function __construct(
         public readonly Model $model,
-        public readonly ?BackedEnum $from,
-        public readonly BackedEnum $to,
+        public readonly string|BackedEnum|null $from,
+        public readonly string|BackedEnum $to,
     ) {
-        $fromLabel = $from->value ?? 'none';
+        parent::__construct(sprintf(
+            "Cannot transition from '%s' to '%s'.",
+            $from === null ? 'none' : $this->label($from),
+            $this->label($to),
+        ));
+    }
 
-        parent::__construct(
-            "Cannot transition from '{$fromLabel}' to '{$to->value}'."
-        );
+    private function label(string|BackedEnum $state): string
+    {
+        return $state instanceof BackedEnum ? (string) $state->value : $state;
     }
 }

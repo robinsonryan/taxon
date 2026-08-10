@@ -53,7 +53,7 @@
 | `addTagAs(string $class, mixed $value)` | Add tag using definition |
 | `getTagAs(string $class)` | Get typed value via definition |
 | `hasTagAs(string $class, mixed $value)` | Check value via definition |
-| `transitionTo(string $class, BackedEnum $to, $user)` | Guarded state transition |
+| `transitionTo(string $class, string\|BackedEnum $to, $user, ?Scope $scope)` | Guarded state transition; throws `UnguardedTransitionException` if the definition declares no guard |
 
 ## Query Scopes
 
@@ -91,6 +91,18 @@ $tag->addChildren(array $names)
 $tag->syncChildren(array $values)
 ```
 
+### Trees
+
+See [Tag Trees](trees.md). These work at any depth; the category API above does not.
+
+```php
+$tag->path()                                              // 'topics/web/frontend'
+Tag::resolvePath(string $path, ?string $tenantId = null)  // ?Tag
+$tag->ancestors()                                         // Collection, root first
+$tag->descendants()                                       // Collection, nearest level first
+$tag->moveTo(?Tag $newParent)                             // re-parent; null promotes to a root
+```
+
 ### Query Scopes
 
 ```php
@@ -112,3 +124,29 @@ Tag::childrenOf(string|int $parent)
 | `isValidValue(mixed $value)` | Validate a value |
 | `addValue(string $name)` | Add value (mutable only) |
 | `removeValue(string $slug)` | Remove value (mutable only) |
+| `transitions()` | The state machine, or null for none |
+| `default()` | The state a model may enter first, or null |
+| `guardsTransitions()` | Whether a guard is declared at all |
+| `normalizeState(string\|BackedEnum $state)` | Reduce a state to its stored value |
+
+## TagDefinition Instance Methods
+
+| Method | Description |
+|--------|-------------|
+| `canTransition(Model $model, string\|BackedEnum\|null $from, string\|BackedEnum $to, mixed $user = null)` | Whether one move is allowed |
+| `availableTransitions(Model $model, mixed $user = null)` | The moves allowed right now |
+
+## Exceptions
+
+| Exception | Raised when |
+|--------|-------------|
+| `TagNotFoundException` | A category is missing and `auto_create` is off |
+| `TagInUseException` | `safeDelete()` on a tag that, or whose subtree, is still assigned |
+| `InvalidTagValueException` | A value is not in a definition's vocabulary |
+| `InvalidTransitionException` | A transition guard refused the move |
+| `UnguardedTransitionException` | `transitionTo()` on a definition that declares no guard |
+| `ImmutableTagDefinitionException` | `addValue()`/`removeValue()` on an enum-backed definition |
+| `CircularTagHierarchyException` | `moveTo()` would put a tag inside its own subtree |
+| `CrossTenantTagMoveException` | `moveTo()` would graft a tag under another tenant's parent |
+| `TagDepthExceededException` | A tree walk passed `taxon.max_tree_depth` edges — usually a cycle in `parent_id` |
+| `DuplicateTagSlugException` | A write would collide on `(slug, parent, tenant)` |

@@ -1,20 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RobinsonRyan\Taxon\Tests;
 
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Migrations\Migrator;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Orchestra\Testbench\TestCase as Orchestra;
 use RobinsonRyan\Taxon\TaxonServiceProvider;
 
 abstract class TestCase extends Orchestra
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $this->setUpDatabase();
-    }
+    use RefreshDatabase;
 
     protected function getPackageProviders($app): array
     {
@@ -25,78 +22,37 @@ abstract class TestCase extends Orchestra
 
     protected function getEnvironmentSetUp($app): void
     {
+        // The suite runs against a real PostgreSQL database (the DDEV `db`
+        // service), not SQLite. SQLite compiles `uuid`, `bigint` and `varchar`
+        // down to the same loose affinity, so it cannot see a column-type
+        // mismatch — which is exactly how a `uuid`-typed `taggable_id` once
+        // shipped as the default schema.
         $app['config']->set('database.default', 'testing');
         $app['config']->set('database.connections.testing', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
+            'driver' => 'pgsql',
+            'host' => env('TAXON_TEST_DB_HOST', 'db'),
+            'port' => (int) env('TAXON_TEST_DB_PORT', 5432),
+            'database' => env('TAXON_TEST_DB_DATABASE', 'testing'),
+            'username' => env('TAXON_TEST_DB_USERNAME', 'db'),
+            'password' => env('TAXON_TEST_DB_PASSWORD', 'db'),
+            'charset' => 'utf8',
             'prefix' => '',
-            'foreign_key_constraints' => true,
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => 'prefer',
         ]);
 
         // Default to incrementing IDs
         $app['config']->set('taxon.id_type', 'incrementing');
-    }
 
-    protected function setUpDatabase(): void
-    {
-        $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
-
-        $this->createTestTables();
-    }
-
-    protected function createTestTables(): void
-    {
-        $useUuid = config('taxon.id_type') === 'uuid7';
-
-        Schema::create('test_models', function (Blueprint $table) use ($useUuid): void {
-            if ($useUuid) {
-                $table->uuid('id')->primary();
-            } else {
-                $table->id();
-            }
-            $table->string('name');
-            $table->string('account_id')->nullable();
-            $table->timestamps();
+        // Register the package migrations (the service provider only publishes
+        // them) and the fixture consumer tables with the migrator, so the
+        // one-time RefreshDatabase migration run picks up both. Registering the
+        // path — rather than calling loadMigrationsFrom() — keeps Testbench from
+        // tearing the schema down and rebuilding it per test.
+        $app->afterResolving('migrator', static function (Migrator $migrator): void {
+            $migrator->path(__DIR__ . '/../database/migrations');
+            $migrator->path(__DIR__ . '/Fixtures/database/migrations');
         });
-
-        Schema::create('test_users', function (Blueprint $table) use ($useUuid): void {
-            if ($useUuid) {
-                $table->uuid('id')->primary();
-            } else {
-                $table->id();
-            }
-            $table->string('name');
-            $table->string('email');
-            $table->string('account_id')->nullable();
-            $table->boolean('is_admin')->default(false);
-            $table->timestamps();
-        });
-
-        Schema::create('test_organizations', function (Blueprint $table) use ($useUuid): void {
-            if ($useUuid) {
-                $table->uuid('id')->primary();
-            } else {
-                $table->id();
-            }
-            $table->string('name');
-            $table->timestamps();
-        });
-    }
-
-    /**
-     * Helper to run tests with UUID7 configuration
-     */
-    protected function useUuid7(): void
-    {
-        config()->set('taxon.id_type', 'uuid7');
-
-        // Recreate tables with UUID columns
-        Schema::dropIfExists('test_organizations');
-        Schema::dropIfExists('test_users');
-        Schema::dropIfExists('test_models');
-        Schema::dropIfExists(config('taxon.tables.taggables'));
-        Schema::dropIfExists(config('taxon.tables.tags'));
-
-        $this->setUpDatabase();
     }
 }

@@ -63,14 +63,23 @@ Full definition: `imports/package-quality-gate.md`. Skill: `/package-quality`.
 
 ## Testing
 
-Pest + Orchestra Testbench. **Unlike the reference package, this suite runs on
-SQLite `:memory:`, not Postgres** — see `tests/TestCase.php::getEnvironmentSetUp`.
-It can: Taxon generates UUIDv7 in PHP (`Str::uuid7()` in `ConfiguresIdentifiers`)
-rather than leaning on a `uuidv7()` column default, so no Postgres feature is
-required. DDEV still runs a Postgres 18 `db` service; the suite does not touch it.
+Pest + Orchestra Testbench, on **real PostgreSQL** — the DDEV `db` service, in a
+database of its own named `testing`, created by a `post-start` hook in
+`.ddev/config.yaml`. Every value is overridable via `TAXON_TEST_DB_*` env vars;
+see `tests/TestCase.php::getEnvironmentSetUp`. This matches the reference package.
 
-That is a **coverage hole, not a design choice you should copy** — see the
-`uuidMorphs` gotcha below for a bug class SQLite's loose typing hides.
+The suite uses `RefreshDatabase`, so migrations run **once** and each test is
+wrapped in a transaction that rolls back. Two consequences worth knowing:
+
+- Tests share one database. A test that assumes a pristine schema, or that commits,
+  will leak into its neighbours. Nothing currently does; keep it that way.
+- Sequences are **not** rolled back, so auto-increment ids keep climbing across the
+  run. Never assert on a literal id value.
+
+The package migrations are registered with the migrator from `TestCase` (the
+service provider only *publishes* them), alongside the fixture consumer tables in
+`tests/Fixtures/database/migrations/`. Registering the path — rather than calling
+`loadMigrationsFrom()` — is what keeps Testbench from rebuilding the schema per test.
 
 ```bash
 ddev composer test
@@ -103,8 +112,8 @@ before inventing a variant.
 
 # What is actually in here
 
-Namespace `RobinsonRyan\Taxon\`, PSR-4 from `src/`. It is small: **13 files and
-~1,490 lines** in `src/`, plus one config and two migrations. Auto-discovered via
+Namespace `RobinsonRyan\Taxon\`, PSR-4 from `src/`. It is small: **18 files and
+~2,255 lines** in `src/`, plus one config and three migrations. Auto-discovered via
 `extra.laravel.providers → TaxonServiceProvider`, which only merges config and
 registers the `taxon-config` / `taxon-migrations` publish tags — no bindings, no
 commands, no routes.
@@ -115,7 +124,8 @@ Everything is **two tables and a self-referencing `parent_id`**:
 
 - **`tags`** — `id`, `name`, `slug`, `parent_id` (nullable, cascade-delete),
   `tenant_id`, `assignable`, `single_select`, `meta` (json). Unique on
-  `(slug, parent_id, tenant_id)`.
+  `(slug, COALESCE(parent_id::text,''), COALESCE(tenant_id,''))`; `parent_id`
+  indexed.
 - **`taggables`** — the polymorphic pivot: `tag_id`, `taggable_type`,
   `taggable_id`, `scope_type`, `scope_id`, `tenant_id`.
 
@@ -158,7 +168,9 @@ it on any model. It is organized in banner-commented sections; the public surfac
 **`Tag` model** (`src/Models/Tag.php`) — `createCategory()`, `createValue()`,
 `addChild()`, `addChildren()`, `syncChildren()`, `safeDelete()` /
 `forceDelete()`, `taggablesCount()` / `totalTaggablesCount()`, plus scopes
-`roots`, `categories`, `assignable`, `slug`, `childrenOf`, `inCategory`.
+`roots`, `categories`, `assignable`, `slug`, `childrenOf`, `inCategory`. The
+arbitrary-depth half lives here too: `path()`, `resolvePath()`, `ancestors()`,
+`descendants()`, `moveTo()`.
 
 **`TagDefinition`** (`src/TagDefinition.php`) — abstract base for a class-backed
 category. Subclass sets `$slug`, `$name`, `$singleSelect`, `$global`. Two flavors:
@@ -189,7 +201,12 @@ fixture models use it too.
 `TagNotFoundException` (category missing and `auto_create` is off) ·
 `TagInUseException` (`safeDelete()` on a tag with pivot rows, checked recursively
 through children) · `InvalidTagValueException` · `InvalidTransitionException` ·
-`ImmutableTagDefinitionException`.
+`UnguardedTransitionException` (`transitionTo()` on a definition that declares no
+guard) · `ImmutableTagDefinitionException` · `CircularTagHierarchyException`
+(`moveTo()` into the tag's own subtree) · `CrossTenantTagMoveException`
+(`moveTo()` under another tenant's parent) · `TagDepthExceededException` (a tree
+walk passed `taxon.max_tree_depth` edges — in practice, a cycle in `parent_id`)
+· `DuplicateTagSlugException` (a write would collide on `(slug, parent, tenant)`).
 
 ## Gotchas — the things that will actually bite
 
@@ -216,10 +233,13 @@ Postgres and reject integer keys on insert.
 
 **Anything about column *types* must be tested on Postgres, not SQLite.** SQLite
 compiles `uuid`, `bigint` and `varchar` down to the same loose affinity, which is
-exactly how the bug above shipped. `tests/Feature/PostgresTaggableIdTypeTest.php`
-runs the published migrations against the DDEV Postgres service and reads
-`information_schema` directly; it is the only test in the suite that can see a
-column type at all.
+exactly how the bug above shipped. The whole suite now runs on Postgres, so that
+blindness is gone by default. `tests/Feature/PostgresTaggableIdTypeTest.php`
+remains separate because it exercises the migrations under *non-default*
+`id_type` / `taggable_id_type` combinations: it needs to drop and recreate `tags`
+and `taggables`, which would destroy the schema `RefreshDatabase` migrated once
+for everyone else. It therefore works in the `db` database on its own connection,
+never in `testing`.
 
 **A self-referencing foreign key needs its primary key declared explicitly.**
 `$table->uuid('id')->primary()` compiles the primary key into a command appended
@@ -241,21 +261,50 @@ and read by nobody — single-vs-multi is purely the caller's choice of `setTag(
 (replaces) vs `addTag()` (appends). `config('taxon.morph_map')` is dead: it
 appears in the config file and is referenced nowhere in `src/`.
 
-**The transition system is duck-typed; the base class supplies none of it.**
-`TagDefinition` has no `canTransition()`, `transitions()`, `default()`, or
-`availableTransitions()`. `HasTags::transitionTo()` does a `method_exists($definition,
-'canTransition')` check and **silently falls through to a plain `setTagAs()` if the
-method is absent** — a typo in the method name turns every guard off with no error.
-The richer conventions (`transitions()` map, `availableTransitions()`) exist only
-in `tests/Fixtures/Definitions/StatusDefinition.php`; treat it as the worked
-example, not as inherited API.
+**The transition contract is inherited API, and it is loud.** As of 0.4.0
+`TagDefinition` supplies `transitions()` (null = no state machine declared),
+`default()`, `canTransition()` (reads the map) and `availableTransitions()`
+(walks the map, filtered through `canTransition()`), plus `guardsTransitions()`,
+`normalizeState()`, `declaredStates()` and `declaresState()`. The map is the
+vocabulary: with no `default()` the *first* state must be one the map mentions
+(it used to fall through to `isValidValue()`, which says yes to everything when
+`values()` is empty), and a database-backed definition's `values()` includes the
+map's states whether or not tags exist for them. Map **keys** are matched on the
+stored value first and `normalizeState()` second, so `'In Progress' => [...]` is
+no longer a state nothing can leave. `HasTags::transitionTo()` no longer duck-types: a
+definition declaring **neither** a map **nor** a `canTransition()` override gets
+`UnguardedTransitionException` rather than the silent unguarded write it used to
+get. `setTagAs()` is the unguarded write. PHP rejects a narrower parameter type
+in an override, so a guard must take `string|BackedEnum|null $from` and narrow
+inside the body — `tests/Fixtures/Definitions/StatusDefinition.php` is the worked
+example and `ClearanceDefinition.php` is the code-only-guard one.
+
+**Trees are `Tag`'s, categories are `HasTags`'.** `path()`, `resolvePath()`,
+`ancestors()`, `descendants()` and `moveTo()` work at any depth (the two walks
+use recursive CTEs — two queries each, whatever the depth). Both walks are
+**bounded** at `config('taxon.max_tree_depth')` edges (64) and raise
+`TagDepthExceededException` past it: a recursive CTE over an adjacency list spins
+forever on a cycle, and killing the client does not stop the query. `moveTo()`
+runs in a transaction that locks the tag, the destination and the destination's
+ancestors in primary-key order *before* re-checking for a cycle — the check used
+to be check-then-write, and two opposing concurrent moves could commit one
+between them. The category API is
+still hard-wired to two levels and nothing here changed that: nesting a
+category's values deeper does not make them visible to `tagsIn()` or
+`withTagIn()`. `docs/trees.md` states the boundary.
 
 **Unscoped means `NULL`, and NULL breaks unique indexes.** The scope migration
 drops the plain unique constraint and issues raw SQL building
 `taggables_unique_tag_model_scope_tenant` over
 `COALESCE(scope_type,''), COALESCE(scope_id,''), COALESCE(tenant_id,'')`,
 precisely because `NULL != NULL` would let duplicate unscoped rows through on
-Postgres/MySQL/SQLite alike. Matching that, `applyScopeFilter()` treats "no
+Postgres/MySQL/SQLite alike. `tags_unique_slug_parent_tenant` had the identical
+hole and enforced nothing for root or global tags until 0.4.0's third migration
+rebuilt it the same way (with `parent_id` cast to text first, since `''` is
+neither a valid bigint nor a valid uuid). That migration de-duplicates before
+creating the index, because consumers may already hold rows it forbids.
+
+Matching that, `applyScopeFilter()` treats "no
 scope" as `WHERE scope_type IS NULL AND scope_id IS NULL` — a scoped and an
 unscoped tag are genuinely different rows, and querying without a scope will not
 find scoped ones. `applyScopeFilterToHas()` deliberately does *not* add the null
@@ -277,9 +326,9 @@ categories share the root namespace (`parent_id IS NULL`), so
 ## Docs
 
 `docs/` holds hand-written user-facing docs — `installation.md`,
-`basic-usage.md`, `categories.md`, `tag-definitions.md`, `tenant-scoping.md`,
-`magic-attributes.md`, `api-reference.md`. `build-spec.md` (110 KB) is the
-original build specification and is historical. Deferred work is in `QUEUE.md`
+`basic-usage.md`, `categories.md`, `trees.md`, `tag-definitions.md`,
+`tenant-scoping.md`, `magic-attributes.md`, `api-reference.md`.
+`build-spec.md` (110 KB) is the original build specification and is historical. Deferred work is in `QUEUE.md`
 (currently: widening to Pest 5 / PHPUnit 13 / PHP 8.4+, which consuming apps are
 waiting on).
 

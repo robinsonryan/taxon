@@ -3,7 +3,18 @@
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11.x or 12.x
+- Laravel 12.x or 13.x (`illuminate/*` `^12.0|^13.0`)
+- PostgreSQL is what the package is developed and tested against. MySQL 8.0.13+
+  and SQLite should work — the uniqueness migration branches on the driver for
+  its text cast — but neither is exercised by the suite, so nothing there is
+  verified.
+- **MariaDB is not supported.** The `tags` uniqueness index is unique over
+  `COALESCE()` expressions, which needs functional key parts; MariaDB has never
+  supported them at any version. Rather than fail halfway — that migration drops
+  the old constraint and de-duplicates *before* creating the new index — it
+  refuses up front with a clear message and changes nothing. The same guard
+  turns away MySQL below 8.0.13 and any driver the package has never been run
+  against.
 
 ## Install via Composer
 
@@ -75,6 +86,11 @@ return [
     // Auto-create tags on first use
     'auto_create' => true,
 
+    // How many edges ancestors()/descendants() will follow before raising
+    // TagDepthExceededException. Bounds the recursive walks so a cycle in
+    // parent_id cannot hang a connection.
+    'max_tree_depth' => 64,
+
     // Multi-tenant configuration
     'tenant' => [
         'enabled' => false,
@@ -96,4 +112,9 @@ ddev composer install
 ddev test
 ```
 
-Tests use SQLite in-memory and don't require the DDEV database.
+The suite runs against **real PostgreSQL** — the DDEV `db` service, in a database
+of its own called `testing`, created by a `post-start` hook. It does not use
+SQLite: `uuid`, `bigint` and `varchar` collapse to one loose affinity there, so a
+column-type bug is unfalsifiable, which is how a `uuid`-typed `taggable_id` once
+shipped as the default schema. Every connection value is overridable via
+`TAXON_TEST_DB_*`; see `tests/TestCase.php`.

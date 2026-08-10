@@ -15,3 +15,35 @@
 ## Blocked
 
 ## Archive
+
+### `tags_unique_slug_parent_tenant` does not fire for root or global tags
+- **Done**: 2026-08-10 · v0.4.0 — `database/migrations/2024_01_03_000000_harden_tags_unique_index_against_nulls.php`
+  drops the fluent composite unique, collapses any duplicate groups a consumer is
+  already holding (pivot rows and children move onto the oldest member first), and
+  recreates the index over `COALESCE` expressions. It also adds the missing
+  `tags_parent_id_index`. `TenantScopingTest::"it global child tags are unique within
+  parent"` now asserts the guarantee its name always claimed.
+- **Added**: 2026-08-08 · SQLite→PostgreSQL test-suite migration
+- **Tier**: LIGHT (schema migration + tests; breaking for consumers holding duplicates)
+- **Why deferred**: needs a new migration that may fail on consumer data that already
+  contains duplicates, plus a de-duplication story. Out of scope for a test-harness
+  change, and a schema decision to make deliberately rather than in passing.
+- **Context**: the index is plain `btree (slug, parent_id, tenant_id)`. NULLs are
+  distinct in a unique index on every driver, so it enforces nothing whenever either
+  nullable column is NULL — i.e. for **every root tag** (`parent_id IS NULL`) and
+  **every global tag** (`tenant_id IS NULL`). Two identical root tags, or two
+  identical global children of one parent, insert cleanly. Verified against
+  PostgreSQL 18: both duplicate pairs accepted.
+
+  The sibling `taggables` index already solves exactly this, in
+  `2024_01_02_000000_add_scope_columns_to_taggables_table.php`, by building the
+  unique over `COALESCE(scope_type,''), COALESCE(scope_id,''), COALESCE(tenant_id,'')`.
+  The `tags` table never got the same treatment. Proposed fix: mirror it — drop
+  `tags_unique_slug_parent_tenant` and recreate as a raw
+  `CREATE UNIQUE INDEX ... (slug, COALESCE(parent_id::text,''), COALESCE(tenant_id,''))`.
+
+  Note `tests/Feature/TenantScopingTest.php::"it global child tags are unique within
+  parent"` is named for a guarantee it does not assert — its body only checks
+  `parent_id` and `tenant_id` on a single child. Give it real teeth when the index
+  is fixed; it will fail today.
+
