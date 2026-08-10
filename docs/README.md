@@ -6,6 +6,7 @@ A flexible hierarchical tagging system for Laravel with tenant scoping and class
 
 - **Direct Tagging**: Simple tag/untag operations on any model
 - **Category Tagging**: Organize tags into categories with single/multi-select behavior
+- **Tag Trees**: Nest tags to any depth, address them by slug path, re-parent safely
 - **Tag Definitions**: Class-based definitions with enum validation and transition guards
 - **Tenant Scoping**: Multi-tenant support with configurable resolution
 - **Tags Tag Tags**: Build RBAC systems or any graph-like relationships
@@ -38,6 +39,7 @@ Post::withTagIn('status', 'published')->get();
 - [Installation](installation.md)
 - [Basic Usage](basic-usage.md)
 - [Categories](categories.md)
+- [Tag Trees](trees.md)
 - [Magic Attributes](magic-attributes.md)
 - [Tag Definitions](tag-definitions.md)
 - [Tenant Scoping](tenant-scoping.md)

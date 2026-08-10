@@ -112,8 +112,8 @@ before inventing a variant.
 
 # What is actually in here
 
-Namespace `RobinsonRyan\Taxon\`, PSR-4 from `src/`. It is small: **13 files and
-~1,490 lines** in `src/`, plus one config and two migrations. Auto-discovered via
+Namespace `RobinsonRyan\Taxon\`, PSR-4 from `src/`. It is small: **16 files and
+~1,955 lines** in `src/`, plus one config and three migrations. Auto-discovered via
 `extra.laravel.providers → TaxonServiceProvider`, which only merges config and
 registers the `taxon-config` / `taxon-migrations` publish tags — no bindings, no
 commands, no routes.
@@ -124,7 +124,8 @@ Everything is **two tables and a self-referencing `parent_id`**:
 
 - **`tags`** — `id`, `name`, `slug`, `parent_id` (nullable, cascade-delete),
   `tenant_id`, `assignable`, `single_select`, `meta` (json). Unique on
-  `(slug, parent_id, tenant_id)`.
+  `(slug, COALESCE(parent_id::text,''), COALESCE(tenant_id,''))`; `parent_id`
+  indexed.
 - **`taggables`** — the polymorphic pivot: `tag_id`, `taggable_type`,
   `taggable_id`, `scope_type`, `scope_id`, `tenant_id`.
 
@@ -167,7 +168,9 @@ it on any model. It is organized in banner-commented sections; the public surfac
 **`Tag` model** (`src/Models/Tag.php`) — `createCategory()`, `createValue()`,
 `addChild()`, `addChildren()`, `syncChildren()`, `safeDelete()` /
 `forceDelete()`, `taggablesCount()` / `totalTaggablesCount()`, plus scopes
-`roots`, `categories`, `assignable`, `slug`, `childrenOf`, `inCategory`.
+`roots`, `categories`, `assignable`, `slug`, `childrenOf`, `inCategory`. The
+arbitrary-depth half lives here too: `path()`, `resolvePath()`, `ancestors()`,
+`descendants()`, `moveTo()`.
 
 **`TagDefinition`** (`src/TagDefinition.php`) — abstract base for a class-backed
 category. Subclass sets `$slug`, `$name`, `$singleSelect`, `$global`. Two flavors:
@@ -198,7 +201,10 @@ fixture models use it too.
 `TagNotFoundException` (category missing and `auto_create` is off) ·
 `TagInUseException` (`safeDelete()` on a tag with pivot rows, checked recursively
 through children) · `InvalidTagValueException` · `InvalidTransitionException` ·
-`ImmutableTagDefinitionException`.
+`UnguardedTransitionException` (`transitionTo()` on a definition that declares no
+guard) · `ImmutableTagDefinitionException` · `CircularTagHierarchyException`
+(`moveTo()` into the tag's own subtree) · `DuplicateTagSlugException` (a write
+would collide on `(slug, parent, tenant)`).
 
 ## Gotchas — the things that will actually bite
 
@@ -253,21 +259,37 @@ and read by nobody — single-vs-multi is purely the caller's choice of `setTag(
 (replaces) vs `addTag()` (appends). `config('taxon.morph_map')` is dead: it
 appears in the config file and is referenced nowhere in `src/`.
 
-**The transition system is duck-typed; the base class supplies none of it.**
-`TagDefinition` has no `canTransition()`, `transitions()`, `default()`, or
-`availableTransitions()`. `HasTags::transitionTo()` does a `method_exists($definition,
-'canTransition')` check and **silently falls through to a plain `setTagAs()` if the
-method is absent** — a typo in the method name turns every guard off with no error.
-The richer conventions (`transitions()` map, `availableTransitions()`) exist only
-in `tests/Fixtures/Definitions/StatusDefinition.php`; treat it as the worked
-example, not as inherited API.
+**The transition contract is inherited API, and it is loud.** As of 0.4.0
+`TagDefinition` supplies `transitions()` (null = no state machine declared),
+`default()`, `canTransition()` (reads the map) and `availableTransitions()`
+(walks the map, filtered through `canTransition()`), plus `guardsTransitions()`
+and `normalizeState()`. `HasTags::transitionTo()` no longer duck-types: a
+definition declaring **neither** a map **nor** a `canTransition()` override gets
+`UnguardedTransitionException` rather than the silent unguarded write it used to
+get. `setTagAs()` is the unguarded write. PHP rejects a narrower parameter type
+in an override, so a guard must take `string|BackedEnum|null $from` and narrow
+inside the body — `tests/Fixtures/Definitions/StatusDefinition.php` is the worked
+example and `ClearanceDefinition.php` is the code-only-guard one.
+
+**Trees are `Tag`'s, categories are `HasTags`'.** `path()`, `resolvePath()`,
+`ancestors()`, `descendants()` and `moveTo()` work at any depth (the two walks
+use recursive CTEs — two queries each, whatever the depth). The category API is
+still hard-wired to two levels and nothing here changed that: nesting a
+category's values deeper does not make them visible to `tagsIn()` or
+`withTagIn()`. `docs/trees.md` states the boundary.
 
 **Unscoped means `NULL`, and NULL breaks unique indexes.** The scope migration
 drops the plain unique constraint and issues raw SQL building
 `taggables_unique_tag_model_scope_tenant` over
 `COALESCE(scope_type,''), COALESCE(scope_id,''), COALESCE(tenant_id,'')`,
 precisely because `NULL != NULL` would let duplicate unscoped rows through on
-Postgres/MySQL/SQLite alike. Matching that, `applyScopeFilter()` treats "no
+Postgres/MySQL/SQLite alike. `tags_unique_slug_parent_tenant` had the identical
+hole and enforced nothing for root or global tags until 0.4.0's third migration
+rebuilt it the same way (with `parent_id` cast to text first, since `''` is
+neither a valid bigint nor a valid uuid). That migration de-duplicates before
+creating the index, because consumers may already hold rows it forbids.
+
+Matching that, `applyScopeFilter()` treats "no
 scope" as `WHERE scope_type IS NULL AND scope_id IS NULL` — a scoped and an
 unscoped tag are genuinely different rows, and querying without a scope will not
 find scoped ones. `applyScopeFilterToHas()` deliberately does *not* add the null
@@ -289,9 +311,9 @@ categories share the root namespace (`parent_id IS NULL`), so
 ## Docs
 
 `docs/` holds hand-written user-facing docs — `installation.md`,
-`basic-usage.md`, `categories.md`, `tag-definitions.md`, `tenant-scoping.md`,
-`magic-attributes.md`, `api-reference.md`. `build-spec.md` (110 KB) is the
-original build specification and is historical. Deferred work is in `QUEUE.md`
+`basic-usage.md`, `categories.md`, `trees.md`, `tag-definitions.md`,
+`tenant-scoping.md`, `magic-attributes.md`, `api-reference.md`.
+`build-spec.md` (110 KB) is the original build specification and is historical. Deferred work is in `QUEUE.md`
 (currently: widening to Pest 5 / PHPUnit 13 / PHP 8.4+, which consuming apps are
 waiting on).
 

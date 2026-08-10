@@ -3,7 +3,10 @@
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11.x or 12.x
+- Laravel 12.x or 13.x (`illuminate/*` `^12.0|^13.0`)
+- PostgreSQL is what the package is developed and tested against. MySQL and
+  SQLite are not exercised by the suite; the uniqueness migration branches on
+  the driver for its text cast, but nothing else is verified there.
 
 ## Install via Composer
 
@@ -96,4 +99,9 @@ ddev composer install
 ddev test
 ```
 
-Tests use SQLite in-memory and don't require the DDEV database.
+The suite runs against **real PostgreSQL** — the DDEV `db` service, in a database
+of its own called `testing`, created by a `post-start` hook. It does not use
+SQLite: `uuid`, `bigint` and `varchar` collapse to one loose affinity there, so a
+column-type bug is unfalsifiable, which is how a `uuid`-typed `taggable_id` once
+shipped as the default schema. Every connection value is overridable via
+`TAXON_TEST_DB_*`; see `tests/TestCase.php`.

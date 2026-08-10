@@ -13,6 +13,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Proposed as **0.4.0**. It breaks compatibility in four places, all listed under
+> *Breaking* below; under the 0.x contract that is what a minor is for. Ryan cuts
+> the tag.
+
+### Added
+- **The transition contract is real API on `TagDefinition`.** `transitions()`,
+  `default()`, `canTransition()` and `availableTransitions()` used to exist only as
+  a convention copied out of a test fixture, with `HasTags::transitionTo()`
+  duck-typing for `canTransition` via `method_exists()`. They are now inherited
+  methods:
+  - `transitions(): ?array` — the state machine, keyed by source state *value*,
+    with enum cases or strings as targets. `null` means "no state machine declared".
+  - `default(): string|BackedEnum|null` — the state a model may enter first, used
+    when it holds no value yet. `null` lets any valid value be the first.
+  - `canTransition(Model $model, string|BackedEnum|null $from, string|BackedEnum $to, mixed $user = null): bool`
+    — answers from the map by default. Override it and call `parent::` first for
+    rules the map cannot express (permissions, model state).
+  - `availableTransitions(Model $model, mixed $user = null): array` — the map's
+    successors of the current state, filtered through `canTransition()`.
+  - `guardsTransitions(): bool` and `normalizeState(string|BackedEnum): string`
+    are the two supporting statics: the first is how `transitionTo()` knows a
+    guard exists, the second is how an enum case, its backing value and a
+    human-typed label are treated as one state.
+- **`UnguardedTransitionException`.** `transitionTo()` throws it when the
+  definition declares no guard at all, rather than silently writing the value.
+- **Tag trees at arbitrary depth**, on the `Tag` model:
+  - `path(): string` — the `/`-joined slugs from the root down.
+  - `Tag::resolvePath(string $path, ?string $tenantId = null): ?static` — the tag
+    at a slug path, walked from a root down, tenant-scoped (a null tenant matches
+    tags with no tenant; it is not a wildcard). One query per segment.
+  - `ancestors(): Collection` (root first) and `descendants(): Collection`
+    (nearest level first) — a recursive CTE for the ids plus one query to hydrate,
+    so two queries whatever the depth or subtree size.
+  - `moveTo(?Tag $newParent): static` — re-parent, or promote to a root with null.
+  - `CircularTagHierarchyException` (the move would put a tag inside its own
+    subtree — valid rows the database will happily store, and every later ancestor
+    walk hangs on them) and `DuplicateTagSlugException` (the destination already
+    holds that slug for that tenant; raised from a pre-check so the caller gets a
+    domain error instead of a `QueryException` that also aborts their PostgreSQL
+    transaction).
+
+  The category API in `HasTags` is untouched and stays two levels deep — a
+  category and its values. Trees are for working with `Tag` directly. The boundary
+  is documented in `docs/trees.md`.
+
+### Fixed
+- **`tags_unique_slug_parent_tenant` now enforces something.** It was a fluent
+  composite unique over `(slug, parent_id, tenant_id)`; both trailing columns carry
+  "none" as NULL, and NULLs are distinct in a unique index on every driver, so it
+  rejected nothing for a **root** tag (`parent_id IS NULL`) or a **global** tag
+  (`tenant_id IS NULL`) — with tenancy off by default, that is every tag in most
+  installations. New migration
+  `2024_01_03_000000_harden_tags_unique_index_against_nulls.php` rebuilds it over
+  `COALESCE` expressions, mirroring what this package already shipped for
+  `taggables`. `parent_id` holds keys, so it is cast to text first, per driver.
+- **`tags.parent_id` is indexed.** Every child, ancestor and descendant lookup
+  filters on it; the old composite led with `slug`, and a foreign key is not an
+  index on PostgreSQL. Same migration.
+- `tests/Feature/TenantScopingTest.php::"it global child tags are unique within
+  parent"` now asserts the guarantee its name always claimed. Its body previously
+  only checked two columns on one child — it would have failed on the old schema.
+
+### Breaking
+- **`transitionTo()` throws `UnguardedTransitionException`** where it used to fall
+  through to an unguarded `setTagAs()`. Any definition without a `transitions()`
+  map and without a `canTransition()` override must be written with `setTagAs()`.
+  This is the point of the change: a renamed or misspelled guard used to disable
+  every check with no error.
+- **`transitionTo()`'s `$to` widened** from `BackedEnum` to `string|BackedEnum`.
+  Existing enum call sites are unaffected.
+- **`InvalidTransitionException::$from` and `::$to` widened** to
+  `string|BackedEnum|null` and `string|BackedEnum`. A string source state used to
+  be discarded to `null` before the exception was constructed, so a database-backed
+  definition could not report what it had refused.
+- **Definitions that already declared the convention methods must widen their
+  signatures** to the base ones — PHP rejects a narrower parameter type
+  (`?StatusEnum $from`, `TestModel $model`). Narrow inside the body instead; see
+  `docs/tag-definitions.md`.
+- **Consumers must re-publish migrations** (`--tag=taxon-migrations`) to pick up
+  the uniqueness fix. It de-duplicates before creating the index, so a database
+  already holding duplicates migrates rather than failing: each group collapses
+  onto its lowest id — the oldest row under either key type — after that group's
+  pivot rows and child tags are moved onto the survivor. Only a pivot row whose
+  survivor already holds an identical one is dropped. Writes that used to produce
+  duplicate root or global tags now raise a `QueryException`.
+
 ### Changed
 - **The test suite runs on real PostgreSQL**, not SQLite `:memory:`. It uses the DDEV
   `db` service in a database of its own (`testing`), created by a `post-start` hook,
