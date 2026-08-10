@@ -1,12 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RobinsonRyan\Taxon\Tests\Fixtures\Definitions;
 
+use BackedEnum;
 use Illuminate\Database\Eloquent\Model;
 use RobinsonRyan\Taxon\TagDefinition;
-use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestModel;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestUser;
 
+/**
+ * The worked example of the transition contract: an enum-backed definition that
+ * declares its state machine as a map and adds one code-level rule on top.
+ *
+ * Note what it no longer carries — `availableTransitions()` and the whole
+ * map-walking body of `canTransition()` are inherited from TagDefinition now.
+ */
 class StatusDefinition extends TagDefinition
 {
     public static string $slug = 'status';
@@ -48,38 +57,21 @@ class StatusDefinition extends TagDefinition
         ];
     }
 
-    public function canTransition(Model $model, ?StatusEnum $from, StatusEnum $to, ?TestUser $user = null): bool
-    {
-        if (! $from instanceof StatusEnum) {
-            return $to === static::default();
-        }
-
-        $allowed = static::transitions()[$from->value] ?? [];
-
-        if (! in_array($to, $allowed)) {
+    public function canTransition(
+        Model $model,
+        string|BackedEnum|null $from,
+        string|BackedEnum $to,
+        mixed $user = null,
+    ): bool {
+        if (! parent::canTransition($model, $from, $to, $user)) {
             return false;
         }
 
-        // Example: only admins can approve
-        return ! ($to === StatusEnum::APPROVED && $user && ! $user->isAdmin());
-    }
-
-    /** @return array<int, StatusEnum> */
-    public function availableTransitions(TestModel $model, ?TestUser $user = null): array
-    {
-        $current = $model->getTagAs(static::class);
-
-        // getTagAs() returns the raw slug for database-backed definitions; this one is
-        // enum-backed, so anything that is not a StatusEnum means "no state set yet".
-        if (! $current instanceof StatusEnum) {
-            return [static::default()];
+        // Example of a rule the map cannot express: only admins can approve.
+        if (static::normalizeState($to) !== StatusEnum::APPROVED->value) {
+            return true;
         }
 
-        $possible = static::transitions()[$current->value] ?? [];
-
-        return array_filter(
-            $possible,
-            fn (StatusEnum $status): bool => $this->canTransition($model, $current, $status, $user)
-        );
+        return ! $user instanceof TestUser || $user->isAdmin();
     }
 }

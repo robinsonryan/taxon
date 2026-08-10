@@ -3,6 +3,7 @@
 namespace RobinsonRyan\Taxon;
 
 use BackedEnum;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use ReflectionMethod;
@@ -166,6 +167,153 @@ abstract class TagDefinition
         $slug = $value instanceof BackedEnum ? $value->value : Str::slug($value);
 
         return in_array($slug, $values);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transitions
+    |--------------------------------------------------------------------------
+    |
+    | A definition declares its state machine here. `transitions()` returning
+    | null means "this definition has no transition guard at all", and
+    | HasTags::transitionTo() refuses to write through it — use setTagAs() when
+    | an unguarded write is what you want.
+    |
+    */
+
+    /**
+     * The allowed target states, keyed by source state value.
+     *
+     * Null means the definition declares no state machine. Keys are state
+     * *values* (an enum's backing value, or a slug); the listed targets may be
+     * either enum cases or strings.
+     *
+     * @return array<string, iterable<string|BackedEnum>>|null
+     */
+    public static function transitions(): ?array
+    {
+        return null;
+    }
+
+    /**
+     * The state a model is expected to enter first, before it holds any value
+     * for this definition.
+     *
+     * Null means "no declared initial state", in which case the default guard
+     * lets any valid value be the first one.
+     */
+    public static function default(): string|BackedEnum|null
+    {
+        return null;
+    }
+
+    /**
+     * Whether this definition guards its transitions at all — either by
+     * declaring a `transitions()` map or by overriding `canTransition()`.
+     */
+    public static function guardsTransitions(): bool
+    {
+        if (static::transitions() !== null) {
+            return true;
+        }
+
+        $reflection = new ReflectionMethod(static::class, 'canTransition');
+
+        return $reflection->getDeclaringClass()->getName() !== self::class;
+    }
+
+    /**
+     * Reduce a state to the value it is stored under — an enum's backing value,
+     * or a slugged string. Guards should compare states through this rather
+     * than with `===`, so `'In Progress'`, `'in-progress'` and the matching enum
+     * case all answer alike.
+     */
+    public static function normalizeState(string|BackedEnum $state): string
+    {
+        return $state instanceof BackedEnum ? (string) $state->value : Str::slug($state);
+    }
+
+    /**
+     * Whether $model may move from $from to $to.
+     *
+     * The default implementation answers from `transitions()`, and refuses
+     * everything when no map is declared. Override it for guards that need the
+     * model or the user — call `parent::canTransition()` first to keep the map
+     * authoritative and add the extra rule on top.
+     */
+    public function canTransition(
+        Model $model,
+        string|BackedEnum|null $from,
+        string|BackedEnum $to,
+        mixed $user = null,
+    ): bool {
+        $transitions = static::transitions();
+
+        if ($transitions === null) {
+            return false;
+        }
+
+        if ($from === null) {
+            $default = static::default();
+
+            return $default === null
+                ? static::isValidValue($to)
+                : static::normalizeState($default) === static::normalizeState($to);
+        }
+
+        foreach ($transitions[static::normalizeState($from)] ?? [] as $candidate) {
+            if (static::normalizeState($candidate) === static::normalizeState($to)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The states $model may move to right now, in the order the map declares
+     * them, filtered through `canTransition()` so code-level guards apply too.
+     *
+     * @return list<string|BackedEnum>
+     */
+    public function availableTransitions(Model $model, mixed $user = null): array
+    {
+        $from = $this->currentState($model);
+
+        if ($from === null) {
+            $default = static::default();
+
+            return $default !== null && $this->canTransition($model, null, $default, $user)
+                ? [$default]
+                : [];
+        }
+
+        // Without a map there is nothing to enumerate: a definition that guards
+        // only in code can answer canTransition() but cannot list its options.
+        $transitions = static::transitions() ?? [];
+        $candidates = $transitions[static::normalizeState($from)] ?? [];
+        $available = [];
+
+        foreach ($candidates as $candidate) {
+            if ($this->canTransition($model, $from, $candidate, $user)) {
+                $available[] = $candidate;
+            }
+        }
+
+        return $available;
+    }
+
+    /** The value $model currently holds for this definition, if it can hold one at all. */
+    protected function currentState(Model $model): string|BackedEnum|null
+    {
+        if (! method_exists($model, 'getTagAs')) {
+            return null;
+        }
+
+        /** @var string|BackedEnum|null $current */
+        $current = $model->getTagAs(static::class);
+
+        return $current;
     }
 
     /*

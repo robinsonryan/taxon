@@ -13,6 +13,7 @@ use RobinsonRyan\Taxon\Contracts\Scope;
 use RobinsonRyan\Taxon\Exceptions\InvalidTagValueException;
 use RobinsonRyan\Taxon\Exceptions\InvalidTransitionException;
 use RobinsonRyan\Taxon\Exceptions\TagNotFoundException;
+use RobinsonRyan\Taxon\Exceptions\UnguardedTransitionException;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Models\Taggable;
 
@@ -719,22 +720,37 @@ trait HasTags
     |--------------------------------------------------------------------------
     */
 
-    /** @param class-string<TagDefinition> $definitionClass */
-    public function transitionTo(string $definitionClass, BackedEnum $to, mixed $user = null, ?Scope $scope = null): static
-    {
+    /**
+     * Move this model to $to through the definition's transition guard.
+     *
+     * A definition that declares no guard — no `transitions()` map and no
+     * `canTransition()` override — throws rather than writing: there is nothing
+     * here to enforce, and quietly behaving like `setTagAs()` is how a
+     * misspelled guard used to disable itself. Call `setTagAs()` directly when
+     * an unguarded write is the intent.
+     *
+     * @param  class-string<TagDefinition>  $definitionClass
+     *
+     * @throws UnguardedTransitionException when the definition declares no guard
+     * @throws InvalidTransitionException when the guard refuses the move
+     */
+    public function transitionTo(
+        string $definitionClass,
+        string|BackedEnum $to,
+        mixed $user = null,
+        ?Scope $scope = null,
+    ): static {
+        if (! $definitionClass::guardsTransitions()) {
+            throw new UnguardedTransitionException($definitionClass);
+        }
+
         $definition = new $definitionClass;
         $from = $this->getTagAs($definitionClass, $scope);
 
-        if (! method_exists($definition, 'canTransition')) {
-            return $this->setTagAs($definitionClass, $to, $scope);
-        }
-
         if (! $definition->canTransition($this, $from, $to, $user)) {
-            $fromEnum = $from instanceof BackedEnum ? $from : null;
-
             throw new InvalidTransitionException(
                 $this,
-                $fromEnum,
+                $from,
                 $to
             );
         }
