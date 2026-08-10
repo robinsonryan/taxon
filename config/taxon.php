@@ -52,6 +52,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Maximum Tree Depth
+    |--------------------------------------------------------------------------
+    |
+    | How many parent -> child edges "ancestors()" and "descendants()" will
+    | follow before giving up with a TagDepthExceededException.
+    |
+    | The walks are recursive CTEs, and a recursive CTE over an adjacency list
+    | has no natural stopping point: a cycle in "parent_id" is a perfectly valid
+    | set of rows, and the walk over one runs until something kills the
+    | statement — holding a connection while it does. moveTo() refuses to create
+    | a cycle, but nothing stops a raw UPDATE, so the walks bound themselves.
+    |
+    | Raise it if your trees are genuinely deeper than this.
+    |
+    */
+    'max_tree_depth' => 64,
+
+    /*
+    |--------------------------------------------------------------------------
     | Tenant Configuration
     |--------------------------------------------------------------------------
     */

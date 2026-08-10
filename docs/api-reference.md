@@ -148,4 +148,5 @@ Tag::childrenOf(string|int $parent)
 | `ImmutableTagDefinitionException` | `addValue()`/`removeValue()` on an enum-backed definition |
 | `CircularTagHierarchyException` | `moveTo()` would put a tag inside its own subtree |
 | `CrossTenantTagMoveException` | `moveTo()` would graft a tag under another tenant's parent |
+| `TagDepthExceededException` | A tree walk passed `taxon.max_tree_depth` edges — usually a cycle in `parent_id` |
 | `DuplicateTagSlugException` | A write would collide on `(slug, parent, tenant)` |

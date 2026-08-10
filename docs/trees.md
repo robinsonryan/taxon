@@ -58,6 +58,15 @@ $topics->descendants(); // Collection: the whole subtree, nearest level first
 Both run a recursive CTE for the ids and one query to hydrate them — two queries
 whatever the depth or the size of the subtree, not one per level.
 
+Both are also **bounded**. A recursive CTE over an adjacency list has no natural
+stopping point: a cycle in `parent_id` is a perfectly valid set of rows, and the
+walk over one runs until something kills the statement — holding a connection
+while it does, and killing the *client* does not stop it. The walks therefore
+follow at most `config('taxon.max_tree_depth')` edges (64 by default) and raise
+`TagDepthExceededException` past that. `moveTo()` refuses to create a cycle, so
+seeing this means either a raw write went around it, or your trees really are
+deeper than the limit — raise the config value if so.
+
 `ancestors()` is empty for a root tag; `descendants()` is empty for a leaf.
 `parent()` and `children()` are still there as ordinary Eloquent relations when
 one level is all you need.
@@ -73,8 +82,8 @@ $web->moveTo(null);         // promote to a root
 them is recoverable afterwards:
 
 - **Into its own subtree** — `CircularTagHierarchyException`. A cycle is a
-  perfectly valid set of rows, so the database will store it; every ancestor walk
-  over it afterwards runs forever.
+  perfectly valid set of rows, so the database will store it, and no walk over it
+  can then reach a root.
 - **Onto a slug the destination already holds**, for the same tenant —
   `DuplicateTagSlugException`. The unique index would reject this anyway, but as
   a `QueryException` that also aborts the surrounding PostgreSQL transaction.
@@ -91,6 +100,21 @@ them is recoverable afterwards:
 All three leave the tag exactly where it was. Everything beneath the moved tag travels
 with it — the subtree hangs off `parent_id`, so nothing else has to be rewritten,
 and the paths of every descendant change accordingly.
+
+### Two moves at once
+
+The cycle check is not a check followed by a hopeful write. `moveTo()` opens a
+transaction, takes a row lock on the tag, on the destination and on everything
+above the destination — in primary-key order, so moves queue rather than
+deadlock — and only then asks whether the destination sits inside the moving
+tag's subtree.
+
+That ordering is what makes it safe under concurrency. Two requests, one moving
+X under Y and the other moving Y under X, would otherwise both look, both see no
+cycle, and both commit — and the cycle they made together is one no ancestor
+walk could get out of. Now the second request blocks on the shared rows, re-reads
+the ancestry once the first has committed, and raises
+`CircularTagHierarchyException`.
 
 ## What the schema gives you
 

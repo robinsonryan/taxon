@@ -108,6 +108,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tenant" is its own space, so a tenant-less tag may not be grafted under a
   tenant's parent either. Promoting a tag to a root (`moveTo(null)`) is
   unaffected.
+- **`moveTo()`'s cycle check is no longer check-then-write.** The move now runs
+  in a transaction that first takes a row lock on the tag, on the destination and
+  on everything above the destination — in primary-key order, so moves queue
+  rather than deadlock — and re-reads the ancestry only after the locks are held.
+  Two concurrent requests, one moving X under Y and the other Y under X, both saw
+  no cycle and both committed; the cycle they made together was one no ancestor
+  walk could get out of. The second request now blocks, sees the first move, and
+  raises `CircularTagHierarchyException`.
+- **`ancestors()` and `descendants()` are bounded.** A recursive CTE over an
+  adjacency list has no natural stopping point, so a cycle written around
+  `moveTo()` — a raw `UPDATE`, an import — made the walks spin until something
+  killed the statement, holding a connection while they did (killing the *client*
+  does not stop the query). Both walks now follow at most
+  `config('taxon.max_tree_depth')` edges, **new and defaulting to 64**, and raise
+  the new `TagDepthExceededException` past that. They probe one level beyond the
+  limit, so a tree that is exactly that deep is not mistaken for one that is too
+  deep. Consumers with a published config file should add the key, or accept the
+  64 the code falls back to.
 
 ### Breaking
 - **`transitionTo()` throws `UnguardedTransitionException`** where it used to fall

@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Events\TransactionBeginning;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use RobinsonRyan\Taxon\Exceptions\CircularTagHierarchyException;
 use RobinsonRyan\Taxon\Exceptions\CrossTenantTagMoveException;
 use RobinsonRyan\Taxon\Exceptions\DuplicateTagSlugException;
+use RobinsonRyan\Taxon\Exceptions\TagDepthExceededException;
 use RobinsonRyan\Taxon\Models\Tag;
 
 /*
@@ -320,5 +324,147 @@ describe('re-parenting stays inside one tenant', function (): void {
 
         expect($web->fresh()->parent_id)->toBeNull()
             ->and($web->fresh()->tenant_id)->toBe('tenant-a');
+    });
+});
+
+describe('the tree walks are bounded', function (): void {
+    /** Wire A -> B -> A directly through the table, the way a lost race would. */
+    function forgeCycle(): Tag
+    {
+        $a = Tag::createCategory('Alpha');
+        $b = Tag::createValue('Beta', $a->id);
+
+        DB::table('tags')->where('id', $a->id)->update(['parent_id' => $b->id]);
+
+        return $a->fresh();
+    }
+
+    it('walks a legal tree right up to the limit', function (): void {
+        config()->set('taxon.max_tree_depth', 3);
+        buildTopicTree();
+        $vue = Tag::where('slug', 'vue')->firstOrFail();
+
+        expect($vue->ancestors()->pluck('slug')->all())->toBe(['topics', 'web', 'frontend']);
+    });
+
+    it('refuses an ancestor walk deeper than the limit', function (): void {
+        config()->set('taxon.max_tree_depth', 2);
+        buildTopicTree();
+        $vue = Tag::where('slug', 'vue')->firstOrFail();
+
+        $vue->ancestors();
+    })->throws(TagDepthExceededException::class);
+
+    it('refuses a descendant walk deeper than the limit', function (): void {
+        config()->set('taxon.max_tree_depth', 2);
+        $topics = buildTopicTree();
+
+        $topics->descendants();
+    })->throws(TagDepthExceededException::class);
+
+    it('walks a subtree right up to the limit', function (): void {
+        config()->set('taxon.max_tree_depth', 3);
+        $topics = buildTopicTree();
+
+        expect($topics->descendants()->pluck('slug')->all())->toBe(['web', 'frontend', 'vue']);
+    });
+
+    it('reports a cycle instead of spinning on it, walking up', function (): void {
+        forgeCycle()->ancestors();
+    })->throws(TagDepthExceededException::class);
+
+    it('reports a cycle instead of spinning on it, walking down', function (): void {
+        forgeCycle()->descendants();
+    })->throws(TagDepthExceededException::class);
+
+    it('names the limit and the tag in the message', function (): void {
+        config()->set('taxon.max_tree_depth', 2);
+        buildTopicTree();
+        $vue = Tag::where('slug', 'vue')->firstOrFail();
+
+        expect(fn (): Collection => $vue->ancestors())
+            ->toThrow(TagDepthExceededException::class, 'vue');
+    });
+});
+
+describe('a move is serialised against opposing moves', function (): void {
+    it('wraps the whole move in one transaction', function (): void {
+        $topics = buildTopicTree();
+        $ops = Tag::createValue('Ops', $topics->id);
+        $frontend = Tag::resolvePath('topics/web/frontend');
+
+        $transactions = 0;
+        Event::listen(TransactionBeginning::class, function () use (&$transactions): void {
+            $transactions++;
+        });
+
+        $frontend->moveTo($ops);
+
+        expect($transactions)->toBe(1);
+    });
+
+    it('locks the tag, the destination and the destination\'s ancestors before it writes', function (): void {
+        $topics = buildTopicTree();
+        $ops = Tag::createValue('Ops', $topics->id);
+        $frontend = Tag::resolvePath('topics/web/frontend');
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $frontend->moveTo($ops);
+        $log = DB::getQueryLog();
+        DB::disableQueryLog();
+
+        $lockIndex = null;
+        $updateIndex = null;
+
+        foreach ($log as $index => $query) {
+            $sql = strtolower((string) $query['query']);
+
+            if ($lockIndex === null && str_contains($sql, 'for update')) {
+                $lockIndex = $index;
+
+                expect($query['bindings'])
+                    ->toEqualCanonicalizing([$frontend->id, $ops->id, $topics->id]);
+            }
+
+            if ($updateIndex === null && str_starts_with($sql, 'update')) {
+                $updateIndex = $index;
+            }
+        }
+
+        expect($lockIndex)->not->toBeNull()
+            ->and($updateIndex)->not->toBeNull()
+            ->and($updateIndex)->toBeGreaterThan($lockIndex);
+    });
+
+    it('re-reads the destination\'s ancestry after taking the locks', function (): void {
+        $topics = buildTopicTree();
+        $ops = Tag::createValue('Ops', $topics->id);
+        $frontend = Tag::resolvePath('topics/web/frontend');
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $frontend->moveTo($ops);
+        $log = DB::getQueryLog();
+        DB::disableQueryLog();
+
+        $lockIndex = null;
+        $ancestryAfterLock = 0;
+
+        foreach ($log as $index => $query) {
+            $sql = strtolower((string) $query['query']);
+
+            if ($lockIndex === null && str_contains($sql, 'for update')) {
+                $lockIndex = $index;
+
+                continue;
+            }
+
+            if ($lockIndex !== null && str_contains($sql, 'with recursive taxon_ancestry')) {
+                $ancestryAfterLock++;
+            }
+        }
+
+        expect($ancestryAfterLock)->toBeGreaterThan(0);
     });
 });

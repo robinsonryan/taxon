@@ -78,6 +78,11 @@ return [
     // Auto-create tags on first use
     'auto_create' => true,
 
+    // How many edges ancestors()/descendants() will follow before raising
+    // TagDepthExceededException. Bounds the recursive walks so a cycle in
+    // parent_id cannot hang a connection.
+    'max_tree_depth' => 64,
+
     // Multi-tenant configuration
     'tenant' => [
         'enabled' => false,

@@ -14,6 +14,7 @@ use RobinsonRyan\Taxon\Concerns\ConfiguresIdentifiers;
 use RobinsonRyan\Taxon\Exceptions\CircularTagHierarchyException;
 use RobinsonRyan\Taxon\Exceptions\CrossTenantTagMoveException;
 use RobinsonRyan\Taxon\Exceptions\DuplicateTagSlugException;
+use RobinsonRyan\Taxon\Exceptions\TagDepthExceededException;
 use RobinsonRyan\Taxon\Exceptions\TagInUseException;
 use RobinsonRyan\Taxon\HasTags;
 
@@ -338,51 +339,91 @@ class Tag extends Model
     }
 
     /**
+     * How many edges a walk will follow before it gives up. See
+     * `config('taxon.max_tree_depth')` for why a bound is not optional.
+     */
+    public static function maxTreeDepth(): int
+    {
+        return (int) config('taxon.max_tree_depth', 64);
+    }
+
+    /**
      * Every tag between the root and this one, root first. Two queries whatever
      * the depth: one recursive CTE for the ids, one to hydrate them.
      *
+     * The CTE is asked for one level *past* the limit, so exceeding it can be
+     * told apart from a tree that is exactly that deep.
+     *
      * @return Collection<int, static>
+     *
+     * @throws TagDepthExceededException when the chain above this tag is longer than `taxon.max_tree_depth`
      */
     public function ancestors(): Collection
     {
         $table = $this->getTable();
         $key = $this->getKeyName();
+        $limit = static::maxTreeDepth();
 
-        return $this->hydrateInOrder($this->getConnection()->select(
+        return $this->hydrateInOrder($this->assertWithinDepth($this->getConnection()->select(
             "with recursive taxon_ancestry as (
                 select {$key} as id, parent_id, 0 as depth from {$table} where {$key} = ?
                 union all
                 select parent.{$key}, parent.parent_id, taxon_ancestry.depth + 1
                 from {$table} parent
                 inner join taxon_ancestry on parent.{$key} = taxon_ancestry.parent_id
+                where taxon_ancestry.depth <= ?
             )
-            select id from taxon_ancestry where depth > 0 order by depth desc",
-            [$this->getKey()],
-        ));
+            select id, depth from taxon_ancestry where depth > 0 order by depth desc",
+            [$this->getKey(), $limit],
+        ), $limit));
     }
 
     /**
      * Every tag below this one, nearest level first. Two queries whatever the
      * size of the subtree.
      *
+     * Depth counts edges from this tag, so a direct child is 1 — the same
+     * measure `ancestors()` uses, and the one `taxon.max_tree_depth` bounds.
+     *
      * @return Collection<int, static>
+     *
+     * @throws TagDepthExceededException when the subtree below this tag is deeper than `taxon.max_tree_depth`
      */
     public function descendants(): Collection
     {
         $table = $this->getTable();
         $key = $this->getKeyName();
+        $limit = static::maxTreeDepth();
 
-        return $this->hydrateInOrder($this->getConnection()->select(
+        return $this->hydrateInOrder($this->assertWithinDepth($this->getConnection()->select(
             "with recursive taxon_subtree as (
-                select {$key} as id, 0 as depth from {$table} where parent_id = ?
+                select {$key} as id, 1 as depth from {$table} where parent_id = ?
                 union all
                 select child.{$key}, taxon_subtree.depth + 1
                 from {$table} child
                 inner join taxon_subtree on child.parent_id = taxon_subtree.id
+                where taxon_subtree.depth <= ?
             )
-            select id from taxon_subtree order by depth asc, id asc",
-            [$this->getKey()],
-        ));
+            select id, depth from taxon_subtree order by depth asc, id asc",
+            [$this->getKey(), $limit],
+        ), $limit));
+    }
+
+    /**
+     * @param  array<int, object{id: mixed, depth: mixed}>  $rows
+     * @return array<int, object{id: mixed, depth: mixed}>
+     *
+     * @throws TagDepthExceededException
+     */
+    protected function assertWithinDepth(array $rows, int $limit): array
+    {
+        foreach ($rows as $row) {
+            if ((int) $row->depth > $limit) {
+                throw new TagDepthExceededException($this, $limit);
+            }
+        }
+
+        return $rows;
     }
 
     /**
@@ -403,18 +444,53 @@ class Tag extends Model
      */
     public function moveTo(?self $newParent): static
     {
-        if ($newParent instanceof Tag) {
-            $this->assertSameTenantAs($newParent);
-            $this->assertNotInOwnSubtree($newParent);
+        /** @var static */
+        return $this->getConnection()->transaction(function () use ($newParent): static {
+            if ($newParent instanceof Tag) {
+                $this->assertSameTenantAs($newParent);
+
+                // Order matters: the chain is locked, and only then is the
+                // cycle check made. Checking first was a check-then-write —
+                // two requests moving X under Y and Y under X both saw no
+                // cycle, both committed, and the cycle they made together was
+                // one no ancestor walk could get out of.
+                $this->lockMoveChain($newParent);
+                $this->assertNotInOwnSubtree($newParent);
+            }
+
+            $this->assertSlugIsFreeUnder($newParent);
+
+            $this->parent_id = $newParent?->getKey();
+            $this->save();
+            $this->unsetRelation('parent');
+
+            return $this;
+        });
+    }
+
+    /**
+     * Take a row lock on this tag, on the destination, and on everything above
+     * the destination — in primary-key order, so two moves can queue but cannot
+     * deadlock.
+     *
+     * An opposing move always shares at least two rows with this one (each
+     * move's tag is the other's destination or an ancestor of it), so it blocks
+     * here and re-reads the ancestry afterwards, by which time the first move is
+     * committed and visible.
+     */
+    protected function lockMoveChain(self $newParent): void
+    {
+        $ids = [$this->getKey(), $newParent->getKey()];
+
+        foreach ($newParent->ancestors() as $ancestor) {
+            $ids[] = $ancestor->getKey();
         }
 
-        $this->assertSlugIsFreeUnder($newParent);
-
-        $this->parent_id = $newParent?->getKey();
-        $this->save();
-        $this->unsetRelation('parent');
-
-        return $this;
+        static::query()
+            ->whereIn($this->getKeyName(), array_values(array_unique($ids)))
+            ->orderBy($this->getKeyName())
+            ->lockForUpdate()
+            ->get();
     }
 
     /**
