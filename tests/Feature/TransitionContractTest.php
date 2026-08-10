@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 use RobinsonRyan\Taxon\Exceptions\InvalidTransitionException;
 use RobinsonRyan\Taxon\Exceptions\UnguardedTransitionException;
+use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\ClearanceDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\PriorityDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StageDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusEnum;
+use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\WorkflowDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestModel;
 use RobinsonRyan\Taxon\Tests\Fixtures\Models\TestUser;
 
@@ -201,5 +203,55 @@ describe('enum-backed definitions accept either form of a state', function (): v
         $model->transitionTo(StatusDefinition::class, 'pending');
 
         expect($model->getTagAs(StatusDefinition::class))->toBe(StatusEnum::PENDING);
+    });
+});
+
+describe('the first state must be one the map knows', function (): void {
+    beforeEach(function (): void {
+        $this->model = TestModel::create(['name' => 'Test']);
+    });
+
+    it('refuses a state the map never mentions, even with no values on record', function (): void {
+        expect(WorkflowDefinition::values())->toBe([]);
+
+        $this->model->transitionTo(WorkflowDefinition::class, 'totally-bogus');
+    })->throws(InvalidTransitionException::class);
+
+    it('creates no value tag for the state it refuses', function (): void {
+        try {
+            $this->model->transitionTo(WorkflowDefinition::class, 'totally-bogus');
+        } catch (InvalidTransitionException) {
+            // expected
+        }
+
+        expect($this->model->getTagAs(WorkflowDefinition::class))->toBeNull()
+            ->and(Tag::where('slug', 'totally-bogus')->exists())->toBeFalse();
+    });
+
+    it('accepts a state the map declares as a source', function (): void {
+        $this->model->transitionTo(WorkflowDefinition::class, 'backlog');
+
+        expect($this->model->getTagAs(WorkflowDefinition::class))->toBe('backlog');
+    });
+
+    it('accepts a state the map declares only as a target', function (): void {
+        $this->model->transitionTo(WorkflowDefinition::class, 'archived');
+
+        expect($this->model->getTagAs(WorkflowDefinition::class))->toBe('archived');
+    });
+
+    it('still lets a declared default be the only first state', function (): void {
+        expect(fn () => $this->model->transitionTo(StageDefinition::class, 'in-progress'))
+            ->toThrow(InvalidTransitionException::class);
+
+        $this->model->transitionTo(StageDefinition::class, 'backlog');
+
+        expect($this->model->getTagAs(StageDefinition::class))->toBe('backlog');
+    });
+
+    it('lists the states a map declares', function (): void {
+        expect(WorkflowDefinition::declaredStates())
+            ->toBe(['backlog', 'in-progress', 'done', 'archived'])
+            ->and(PriorityDefinition::declaredStates())->toBe([]);
     });
 });

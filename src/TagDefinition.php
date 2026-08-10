@@ -234,6 +234,36 @@ abstract class TagDefinition
     }
 
     /**
+     * Every state the `transitions()` map mentions — its keys and its targets,
+     * normalized, in declaration order. Empty when no map is declared.
+     *
+     * This is the map's own vocabulary, and it is what an initial state is
+     * checked against when the definition declares no `default()`.
+     *
+     * @return list<string>
+     */
+    public static function declaredStates(): array
+    {
+        $transitions = static::transitions();
+
+        if ($transitions === null) {
+            return [];
+        }
+
+        $states = [];
+
+        foreach ($transitions as $from => $targets) {
+            $states[] = static::normalizeState($from);
+
+            foreach ($targets as $target) {
+                $states[] = static::normalizeState($target);
+            }
+        }
+
+        return array_values(array_unique($states));
+    }
+
+    /**
      * Whether $model may move from $from to $to.
      *
      * The default implementation answers from `transitions()`, and refuses
@@ -247,27 +277,44 @@ abstract class TagDefinition
         string|BackedEnum $to,
         mixed $user = null,
     ): bool {
-        $transitions = static::transitions();
-
-        if ($transitions === null) {
+        if (static::transitions() === null) {
             return false;
         }
 
         if ($from === null) {
             $default = static::default();
 
+            // With no declared default, the first state is anything the map
+            // knows about. Deferring to isValidValue() here was a hole: a
+            // database-backed definition has no value tags until something is
+            // written, `values()` is therefore empty, and "no declared values"
+            // means "everything is valid" — so the very first write could put
+            // the model into a state the machine has no rules for, with no
+            // transition back out.
             return $default === null
-                ? static::isValidValue($to)
+                ? in_array(static::normalizeState($to), static::declaredStates(), true)
                 : static::normalizeState($default) === static::normalizeState($to);
         }
 
-        foreach ($transitions[static::normalizeState($from)] ?? [] as $candidate) {
+        foreach (static::transitionsFrom($from) as $candidate) {
             if (static::normalizeState($candidate) === static::normalizeState($to)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * The map's targets for $from.
+     *
+     * @return iterable<string|BackedEnum>
+     */
+    protected static function transitionsFrom(string|BackedEnum $from): iterable
+    {
+        $transitions = static::transitions() ?? [];
+
+        return $transitions[static::normalizeState($from)] ?? [];
     }
 
     /**
@@ -290,8 +337,7 @@ abstract class TagDefinition
 
         // Without a map there is nothing to enumerate: a definition that guards
         // only in code can answer canTransition() but cannot list its options.
-        $transitions = static::transitions() ?? [];
-        $candidates = $transitions[static::normalizeState($from)] ?? [];
+        $candidates = static::transitionsFrom($from);
         $available = [];
 
         foreach ($candidates as $candidate) {

@@ -123,8 +123,11 @@ $post->transitionTo(StatusDefinition::class, StatusEnum::APPROVED);
 ```
 
 `default()` decides the **first** move, when the model holds no value yet: only
-the default is reachable. Leave `default()` unset and any valid value may be the
-first one.
+the default is reachable. Leave `default()` unset and the first state may be any
+state the map **mentions** — a key, or a target on the right of an arrow. It is
+never something the map has no rules for: a state outside the map's own
+vocabulary would leave the model wedged, holding a value with no transition out
+of it.
 
 States are compared through `normalizeState()` — an enum case, its backing value
 and a human-typed label all answer alike, so `StatusEnum::PENDING`, `'pending'`
@@ -188,6 +191,7 @@ instead of turning itself off. `setTagAs()` remains the unguarded write.
 |---|---|---|---|
 | `transitions(): ?array` | static | `null` | The state machine, keyed by source state value |
 | `default(): string\|BackedEnum\|null` | static | `null` | The state a model may enter first |
+| `declaredStates(): array` | static | derived | Every state the map mentions — keys and targets, normalized |
 | `guardsTransitions(): bool` | static | derived | True if a map is declared or `canTransition()` is overridden |
 | `normalizeState(string\|BackedEnum): string` | static | — | Reduce a state to its stored value |
 | `canTransition(Model, from, to, user): bool` | instance | reads the map | Whether one move is allowed |

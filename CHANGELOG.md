@@ -74,6 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/Feature/TenantScopingTest.php::"it global child tags are unique within
   parent"` now asserts the guarantee its name always claimed. Its body previously
   only checked two columns on one child — it would have failed on the old schema.
+- **A definition's *first* state can no longer be one its map never mentions.**
+  With a `transitions()` map and no `default()`, the guard deferred to
+  `isValidValue()`; a database-backed definition has no value tags until
+  something is written, so `values()` was empty, empty means "everything is
+  valid", and the first `transitionTo()` could write a typo'd state the machine
+  had no rules for — permanently wedging the model, since nothing transitions
+  out of an undeclared state. The initial state is now checked against the map's
+  own vocabulary. `TagDefinition::declaredStates()` exposes that vocabulary: every
+  state the map mentions, as a key or as a target, normalized and in declaration
+  order.
 
 ### Breaking
 - **`transitionTo()` throws `UnguardedTransitionException`** where it used to fall
