@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use RobinsonRyan\Taxon\Models\Tag;
 
 describe('Tenant Scoping', function (): void {
@@ -74,8 +75,13 @@ describe('Global Tags', function (): void {
         $parent = Tag::createCategory('System');
         $child = $parent->addChild('config');
 
-        // Verify child was created correctly
         expect($child->parent_id)->toBe($parent->id)
             ->and($child->tenant_id)->toBeNull();
+
+        // The name of this test used to be the whole of its guarantee: the body
+        // only checked the columns, because the index it describes did not fire
+        // for a global (tenant_id IS NULL) tag. It does now.
+        expect(fn () => DB::transaction(fn (): Tag => $parent->addChild('config')))
+            ->toThrow(QueryException::class);
     });
 });
