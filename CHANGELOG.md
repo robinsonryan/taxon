@@ -81,9 +81,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid", and the first `transitionTo()` could write a typo'd state the machine
   had no rules for — permanently wedging the model, since nothing transitions
   out of an undeclared state. The initial state is now checked against the map's
-  own vocabulary. `TagDefinition::declaredStates()` exposes that vocabulary: every
-  state the map mentions, as a key or as a target, normalized and in declaration
-  order.
+  own vocabulary. `TagDefinition::declaredStates()` exposes that vocabulary —
+  every state the map mentions, as a key or as a target — and
+  `declaresState(string|BackedEnum)` tests membership however the state is spelled.
+- **A `transitions()` map's own keys are read through `normalizeState()`**, the
+  way its targets always were. `'In Progress' => ['done']` used to declare a state
+  nothing could ever leave: the lookup key was normalized, the map's keys were
+  not, so every declared move out of it was refused. Keys are matched on their
+  stored value first and their normalized form second, so a backing value that
+  slugging would change (`'in_progress'`) still finds its own row.
+- **A map-declared state is a valid value, tag or no tag.** A database-backed
+  definition's `values()` now returns the category's children *plus* the states
+  its map declares. Without that, such a definition could not make its second
+  move — the first write creates the only child there is, and `isValidValue()`
+  rejected every other state in the map. Definitions carrying
+  `values() = array_keys(transitions())` as a workaround can drop it; keeping it
+  is harmless but also makes the definition's values immutable.
 
 ### Breaking
 - **`transitionTo()` throws `UnguardedTransitionException`** where it used to fall

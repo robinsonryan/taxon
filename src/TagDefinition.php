@@ -31,17 +31,37 @@ abstract class TagDefinition
         return null;
     }
 
-    /** @return array<int, string> */
+    /**
+     * The values this definition may hold.
+     *
+     * An enum-backed definition answers from its cases. A database-backed one
+     * answers from the category's children **plus every state its
+     * `transitions()` map declares — a declared state is a value whether or not
+     * a tag for it has been created yet. Without that, a map-declared definition
+     * could not make its second move: the first write creates one child, and
+     * `isValidValue()` would then reject every other state in the map.
+     *
+     * @return array<int, string>
+     */
     public static function values(): array
     {
         if ($enum = static::enum()) {
             return array_map(fn ($case) => $case->value, $enum::cases());
         }
 
-        return static::tag()
+        // Strings are stored slugged, so normalizeState() is the stored form
+        // here — the enum-backing-value case is handled above.
+        $declared = array_map(
+            static::normalizeState(...),
+            static::declaredStates(),
+        );
+
+        $children = static::tag()
             ->children()
             ->pluck('slug')
             ->toArray();
+
+        return array_values(array_unique([...$declared, ...$children]));
     }
 
     public static function valuesMutable(): bool
@@ -186,7 +206,9 @@ abstract class TagDefinition
      *
      * Null means the definition declares no state machine. Keys are state
      * *values* (an enum's backing value, or a slug); the listed targets may be
-     * either enum cases or strings.
+     * either enum cases or strings. Keys are matched the same way targets are —
+     * on the stored value first, then through `normalizeState()` — so a key
+     * written as a human label still names the state it looks like.
      *
      * @return array<string, iterable<string|BackedEnum>>|null
      */
@@ -200,7 +222,8 @@ abstract class TagDefinition
      * for this definition.
      *
      * Null means "no declared initial state", in which case the default guard
-     * lets any valid value be the first one.
+     * lets the first state be any state the `transitions()` map mentions — never
+     * one it has no rules for.
      */
     public static function default(): string|BackedEnum|null
     {
@@ -235,10 +258,11 @@ abstract class TagDefinition
 
     /**
      * Every state the `transitions()` map mentions — its keys and its targets,
-     * normalized, in declaration order. Empty when no map is declared.
+     * in declaration order, spelled the way the map spells them (an enum target
+     * reduced to its backing value). Empty when no map is declared.
      *
-     * This is the map's own vocabulary, and it is what an initial state is
-     * checked against when the definition declares no `default()`.
+     * This is the map's own vocabulary. Use `declaresState()` to test membership:
+     * a map may be keyed by human labels, and those do not compare literally.
      *
      * @return list<string>
      */
@@ -253,14 +277,36 @@ abstract class TagDefinition
         $states = [];
 
         foreach ($transitions as $from => $targets) {
-            $states[] = static::normalizeState($from);
+            $states[] = $from;
 
             foreach ($targets as $target) {
-                $states[] = static::normalizeState($target);
+                $states[] = $target instanceof BackedEnum ? (string) $target->value : $target;
             }
         }
 
         return array_values(array_unique($states));
+    }
+
+    /**
+     * Whether the `transitions()` map mentions $state at all, as a source or as
+     * a target.
+     *
+     * Compares on the stored value first and on `normalizeState()` second, the
+     * same two-step the map's keys are looked up by — so an enum case, its
+     * backing value and a human label all find the state they name.
+     */
+    public static function declaresState(string|BackedEnum $state): bool
+    {
+        $stored = $state instanceof BackedEnum ? (string) $state->value : $state;
+        $normalized = static::normalizeState($state);
+
+        foreach (static::declaredStates() as $declared) {
+            if ($declared === $stored || static::normalizeState($declared) === $normalized) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -292,7 +338,7 @@ abstract class TagDefinition
             // the model into a state the machine has no rules for, with no
             // transition back out.
             return $default === null
-                ? in_array(static::normalizeState($to), static::declaredStates(), true)
+                ? static::declaresState($to)
                 : static::normalizeState($default) === static::normalizeState($to);
         }
 
@@ -308,13 +354,31 @@ abstract class TagDefinition
     /**
      * The map's targets for $from.
      *
+     * The map's *keys* are matched the same way its targets are: by the stored
+     * value first, then through `normalizeState()`. Writing `'In Progress'` as a
+     * key used to declare a state nothing could ever leave — the lookup key was
+     * normalized, the map's own keys were not. The exact match is tried first so
+     * a backing value that slugging would change (`'in_progress'`) still finds
+     * its own row.
+     *
      * @return iterable<string|BackedEnum>
      */
     protected static function transitionsFrom(string|BackedEnum $from): iterable
     {
         $transitions = static::transitions() ?? [];
+        $state = static::normalizeState($from);
 
-        return $transitions[static::normalizeState($from)] ?? [];
+        if (isset($transitions[$state])) {
+            return $transitions[$state];
+        }
+
+        foreach ($transitions as $key => $targets) {
+            if (static::normalizeState($key) === $state) {
+                return $targets;
+            }
+        }
+
+        return [];
     }
 
     /**

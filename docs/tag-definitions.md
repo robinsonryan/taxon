@@ -75,6 +75,11 @@ PriorityDefinition::addValue('Low');
 PriorityDefinition::removeValue('low');
 ```
 
+A database-backed definition's values are its category's children **plus every
+state its `transitions()` map declares**. A declared state is a value whether or
+not a tag for it exists yet — otherwise the first write would create the only
+child there is, and the definition could not make its second move.
+
 ## Transition Guards
 
 A definition can describe which state changes are allowed. The whole contract is
@@ -131,7 +136,15 @@ of it.
 
 States are compared through `normalizeState()` — an enum case, its backing value
 and a human-typed label all answer alike, so `StatusEnum::PENDING`, `'pending'`
-and `'Pending'` are one state. Compare that way in your own guards too.
+and `'Pending'` are one state. That holds on **both** sides of the arrow: a map
+keyed `'In Progress' => [...]` is found by `'in-progress'` and by the matching
+enum case. Compare that way in your own guards too.
+
+The one thing normalizing cannot reach is a backing value that slugging would
+change — `'in_progress'` slugs to `'in-progress'`, a different string. A state is
+therefore matched on its **stored value first** and on its normalized form
+second, so an enum keyed by `MyEnum::IN_PROGRESS->value` keeps working. Keying
+the map by stored values is still the clearer habit.
 
 ### Add a rule the map cannot express
 
@@ -191,7 +204,8 @@ instead of turning itself off. `setTagAs()` remains the unguarded write.
 |---|---|---|---|
 | `transitions(): ?array` | static | `null` | The state machine, keyed by source state value |
 | `default(): string\|BackedEnum\|null` | static | `null` | The state a model may enter first |
-| `declaredStates(): array` | static | derived | Every state the map mentions — keys and targets, normalized |
+| `declaredStates(): array` | static | derived | Every state the map mentions, as the map spells it |
+| `declaresState(string\|BackedEnum): bool` | static | derived | Whether the map mentions a state, however it is spelled |
 | `guardsTransitions(): bool` | static | derived | True if a map is declared or `canTransition()` is overridden |
 | `normalizeState(string\|BackedEnum): string` | static | — | Reduce a state to its stored value |
 | `canTransition(Model, from, to, user): bool` | instance | reads the map | Whether one move is allowed |

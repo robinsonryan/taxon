@@ -6,7 +6,10 @@ use RobinsonRyan\Taxon\Exceptions\InvalidTransitionException;
 use RobinsonRyan\Taxon\Exceptions\UnguardedTransitionException;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\ClearanceDefinition;
+use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\PipelineDefinition;
+use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\PipelineStateEnum;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\PriorityDefinition;
+use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\ReviewDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StageDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusDefinition;
 use RobinsonRyan\Taxon\Tests\Fixtures\Definitions\StatusEnum;
@@ -211,11 +214,25 @@ describe('the first state must be one the map knows', function (): void {
         $this->model = TestModel::create(['name' => 'Test']);
     });
 
-    it('refuses a state the map never mentions, even with no values on record', function (): void {
-        expect(WorkflowDefinition::values())->toBe([]);
+    it('refuses a state the map never mentions, even with no value tags on record', function (): void {
+        expect(Tag::where('slug', 'workflow')->exists())->toBeFalse();
 
         $this->model->transitionTo(WorkflowDefinition::class, 'totally-bogus');
     })->throws(InvalidTransitionException::class);
+
+    it('treats every state the map declares as a value, tag or no tag', function (): void {
+        expect(WorkflowDefinition::values())
+            ->toBe(['backlog', 'in-progress', 'done', 'archived']);
+    });
+
+    it('walks the whole map without a values() override on the definition', function (): void {
+        $this->model->transitionTo(WorkflowDefinition::class, 'backlog');
+        $this->model->transitionTo(WorkflowDefinition::class, 'in-progress');
+        $this->model->transitionTo(WorkflowDefinition::class, 'done');
+        $this->model->transitionTo(WorkflowDefinition::class, 'archived');
+
+        expect($this->model->getTagAs(WorkflowDefinition::class))->toBe('archived');
+    });
 
     it('creates no value tag for the state it refuses', function (): void {
         try {
@@ -253,5 +270,69 @@ describe('the first state must be one the map knows', function (): void {
         expect(WorkflowDefinition::declaredStates())
             ->toBe(['backlog', 'in-progress', 'done', 'archived'])
             ->and(PriorityDefinition::declaredStates())->toBe([]);
+    });
+});
+
+describe('a map is read through normalizeState on both sides of the arrow', function (): void {
+    beforeEach(function (): void {
+        $this->model = TestModel::create(['name' => 'Test']);
+    });
+
+    it('finds a key written as a human label', function (): void {
+        $this->model->transitionTo(ReviewDefinition::class, 'Not Started');
+
+        $this->model->transitionTo(ReviewDefinition::class, 'In Progress');
+
+        expect($this->model->getTagAs(ReviewDefinition::class))->toBe('in-progress');
+    });
+
+    it('still refuses what a label-keyed map does not allow', function (): void {
+        $this->model->transitionTo(ReviewDefinition::class, 'Not Started');
+
+        $this->model->transitionTo(ReviewDefinition::class, 'Approved');
+    })->throws(InvalidTransitionException::class);
+
+    it('enumerates the successors of a label-keyed state', function (): void {
+        $this->model->transitionTo(ReviewDefinition::class, 'Not Started');
+
+        expect((new ReviewDefinition)->availableTransitions($this->model))->toBe(['In Progress']);
+    });
+
+    it('reaches a terminal state through a label-keyed map', function (): void {
+        $this->model->transitionTo(ReviewDefinition::class, 'Not Started');
+        $this->model->transitionTo(ReviewDefinition::class, 'In Progress');
+        $this->model->transitionTo(ReviewDefinition::class, 'Approved');
+
+        expect((new ReviewDefinition)->availableTransitions($this->model))->toBe([]);
+    });
+
+    it('still matches an enum backing value that slugging would change', function (): void {
+        $this->model->transitionTo(PipelineDefinition::class, PipelineStateEnum::NOT_STARTED);
+
+        $this->model->transitionTo(PipelineDefinition::class, PipelineStateEnum::IN_PROGRESS);
+
+        expect($this->model->getTagAs(PipelineDefinition::class))->toBe(PipelineStateEnum::IN_PROGRESS)
+            ->and((new PipelineDefinition)->availableTransitions($this->model))
+            ->toBe([PipelineStateEnum::SHIPPED]);
+    });
+});
+
+describe('the map reports its own vocabulary', function (): void {
+    it('lists a label-keyed map the way the map spells it', function (): void {
+        expect(ReviewDefinition::declaredStates())
+            ->toBe(['Not Started', 'In Progress', 'Approved']);
+    });
+
+    it('recognises a declared state however it is spelled', function (): void {
+        expect(ReviewDefinition::declaresState('in-progress'))->toBeTrue()
+            ->and(ReviewDefinition::declaresState('In Progress'))->toBeTrue()
+            ->and(ReviewDefinition::declaresState('shipped'))->toBeFalse();
+    });
+
+    it('recognises an enum case by its backing value, not its slug', function (): void {
+        expect(PipelineDefinition::declaredStates())
+            ->toBe(['not_started', 'in_progress', 'shipped'])
+            ->and(PipelineDefinition::declaresState(PipelineStateEnum::IN_PROGRESS))->toBeTrue()
+            ->and(PipelineDefinition::declaresState('in_progress'))->toBeTrue();
     });
 });

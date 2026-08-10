@@ -26,17 +26,12 @@ class StageDefinition extends TagDefinition
     }
 
     /**
-     * The vocabulary is the map's own keys, so a state can never be written
-     * that the state machine has no rules for.
+     * It used to carry `values() = array_keys(transitions())` to keep a state
+     * from being written that the machine has no rules for. TagDefinition does
+     * that itself now — a declared state is a value — so the override is gone.
      *
-     * @return array<int, string>
+     * @return array<string, list<string>>
      */
-    public static function values(): array
-    {
-        return array_keys(static::transitions());
-    }
-
-    /** @return array<string, list<string>> */
     public static function transitions(): array
     {
         return [
