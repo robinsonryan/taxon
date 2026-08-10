@@ -232,3 +232,84 @@ it('is reversible back to the schema it replaced', function (): void {
     expect($indexes)->not->toHaveKey('tags_parent_id_index')
         ->and($indexes['tags_unique_slug_parent_tenant'])->not->toContain('COALESCE');
 });
+
+/*
+|--------------------------------------------------------------------------
+| Driver support
+|--------------------------------------------------------------------------
+|
+| The index this migration builds needs functional key parts. PostgreSQL and
+| SQLite take an expression in an index directly; MySQL grew the double-paren
+| form in 8.0.13; MariaDB has never supported it at all. Getting that wrong is
+| not a cosmetic failure — up() drops the old constraint and de-duplicates
+| before it creates the new index, so a CREATE that fails leaves the table with
+| no uniqueness at all and a half-applied migration. It therefore refuses
+| up-front, before touching anything.
+|
+*/
+
+function lastTaxonMigration(): object
+{
+    $files = taxonMigrationFiles();
+
+    return require $files[count($files) - 1];
+}
+
+it('refuses to run on MariaDB', function (): void {
+    expect(fn () => lastTaxonMigration()->assertDriverSupported('mariadb', '10.11.6'))
+        ->toThrow(RuntimeException::class, 'MariaDB');
+});
+
+it('refuses a MariaDB server reported through the mysql driver', function (): void {
+    expect(fn () => lastTaxonMigration()->assertDriverSupported('mysql', '10.11.6-MariaDB'))
+        ->toThrow(RuntimeException::class, 'MariaDB');
+});
+
+it('refuses MySQL older than functional key parts', function (): void {
+    expect(fn () => lastTaxonMigration()->assertDriverSupported('mysql', '5.7.44'))
+        ->toThrow(RuntimeException::class, '8.0.13');
+});
+
+it('accepts the drivers that can build the index', function (): void {
+    $migration = lastTaxonMigration();
+
+    $migration->assertDriverSupported('pgsql');
+    $migration->assertDriverSupported('sqlite');
+    $migration->assertDriverSupported('mysql', '8.0.13');
+    $migration->assertDriverSupported('mysql', '8.4.2');
+
+    expect(true)->toBeTrue();
+});
+
+it('refuses a driver it has never been run against', function (): void {
+    expect(fn () => lastTaxonMigration()->assertDriverSupported('sqlsrv', '16.0'))
+        ->toThrow(RuntimeException::class, 'sqlsrv');
+});
+
+it('names the migration and points at the docs, so the message is actionable', function (): void {
+    expect(fn () => lastTaxonMigration()->assertDriverSupported('mariadb', '11.4.2'))
+        ->toThrow(RuntimeException::class, 'docs/installation.md');
+});
+
+it('drops nothing when it refuses the driver', function (): void {
+    config()->set('database.connections.taxon_unsupported_probe', [
+        'driver' => 'sqlsrv',
+        'host' => '127.0.0.1',
+        'database' => 'nowhere',
+        'username' => 'nobody',
+        'password' => '',
+        'prefix' => '',
+    ]);
+    config()->set('database.default', 'taxon_unsupported_probe');
+
+    expect(fn () => lastTaxonMigration()->up())->toThrow(RuntimeException::class);
+
+    config()->set('database.default', DEDUP_CONNECTION);
+
+    $indexes = DB::connection(DEDUP_CONNECTION)->table('pg_indexes')
+        ->where('tablename', 'tags')
+        ->pluck('indexname')
+        ->all();
+
+    expect($indexes)->toContain('tags_unique_slug_parent_tenant');
+});

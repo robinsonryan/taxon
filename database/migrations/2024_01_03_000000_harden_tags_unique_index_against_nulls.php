@@ -28,6 +28,11 @@ use Illuminate\Support\Facades\Schema;
  * cast to text before COALESCE — `''` is neither a valid bigint nor a valid
  * uuid. The cast syntax is per-driver; see castParentIdToText().
  *
+ * **Not every driver can build this index**, and this one is destructive in the
+ * middle, so `up()` refuses an unsupported driver before it drops anything —
+ * see assertDriverSupported(). MariaDB is the case that matters: it has no
+ * functional key parts at any version.
+ *
  * **De-duplication runs first.** A consumer upgrading into this migration may
  * already hold the duplicates it is about to forbid, and a bare
  * CREATE UNIQUE INDEX would fail their deploy with no way forward. Each
@@ -41,6 +46,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // First, before anything is dropped: this migration is destructive in
+        // the middle, so a driver that cannot finish it must stop it here.
+        $this->assertDriverSupported(DB::connection()->getDriverName());
+
         $tagTable = $this->tagTable();
         $tenantColumn = $this->tenantColumn();
 
@@ -167,20 +176,77 @@ return new class extends Migration
     }
 
     /**
+     * Refuse a driver that cannot build the index this migration exists to
+     * create — **before** `up()` drops the old constraint and de-duplicates.
+     *
+     * The index is unique over expressions, and support for that is not
+     * universal. PostgreSQL and SQLite index an expression directly. MySQL grew
+     * *functional key parts* in 8.0.13, and requires exactly the double-paren
+     * form these callers emit. **MariaDB has never supported them, at any
+     * version** — it has generated columns instead — so `CREATE UNIQUE INDEX`
+     * fails there. That failure lands after the drop and the de-duplication, at
+     * which point the table has no uniqueness at all and the migration is half
+     * applied. Better to refuse before touching anything, and say so.
+     *
+     * $serverVersion is a parameter so this is testable without the server it
+     * describes; leave it null and it is read from the live connection.
+     *
+     * @throws RuntimeException when the driver cannot build a unique index over expressions
+     */
+    public function assertDriverSupported(string $driver, ?string $serverVersion = null): void
+    {
+        $tail = 'Nothing has been changed. PostgreSQL is what this package is developed and ' .
+            'tested against; see docs/installation.md.';
+
+        if (in_array($driver, ['pgsql', 'sqlite'], true)) {
+            return;
+        }
+
+        if ($driver !== 'mysql' && $driver !== 'mariadb') {
+            throw new RuntimeException(
+                "Taxon's tags uniqueness migration cannot run on the [{$driver}] driver: it needs a " .
+                "unique index over COALESCE() expressions, and [{$driver}] has never been exercised " .
+                "with one. {$tail}"
+            );
+        }
+
+        $serverVersion ??= (string) DB::connection()->getPdo()->getAttribute(PDO::ATTR_SERVER_VERSION);
+
+        if ($driver === 'mariadb' || stripos($serverVersion, 'mariadb') !== false) {
+            throw new RuntimeException(
+                "Taxon's tags uniqueness migration cannot run on MariaDB (reported version " .
+                "{$serverVersion}): the index needs functional key parts, which MariaDB does not " .
+                "support at any version. {$tail}"
+            );
+        }
+
+        if (version_compare($serverVersion, '8.0.13', '<')) {
+            throw new RuntimeException(
+                "Taxon's tags uniqueness migration needs MySQL 8.0.13 or later for functional key " .
+                "parts; this server reports {$serverVersion}. {$tail}"
+            );
+        }
+    }
+
+    /**
      * `parent_id` as a non-null text key. Wrapped in parentheses by the callers,
-     * which MySQL requires of a functional index key part and PostgreSQL and
-     * SQLite both accept.
+     * which MySQL requires of a functional key part and PostgreSQL and SQLite
+     * both accept.
      */
     private function parentKey(): string
     {
         return "COALESCE({$this->castParentIdToText()}, '')";
     }
 
+    /**
+     * Only three drivers reach this — assertDriverSupported() has turned the
+     * rest away, MariaDB included.
+     */
     private function castParentIdToText(): string
     {
         return match (DB::connection()->getDriverName()) {
             'pgsql' => 'parent_id::text',
-            'mysql', 'mariadb' => 'cast(parent_id as char)',
+            'mysql' => 'cast(parent_id as char)',
             default => 'cast(parent_id as text)',
         };
     }

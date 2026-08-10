@@ -4,9 +4,17 @@
 
 - PHP 8.2+
 - Laravel 12.x or 13.x (`illuminate/*` `^12.0|^13.0`)
-- PostgreSQL is what the package is developed and tested against. MySQL and
-  SQLite are not exercised by the suite; the uniqueness migration branches on
-  the driver for its text cast, but nothing else is verified there.
+- PostgreSQL is what the package is developed and tested against. MySQL 8.0.13+
+  and SQLite should work — the uniqueness migration branches on the driver for
+  its text cast — but neither is exercised by the suite, so nothing there is
+  verified.
+- **MariaDB is not supported.** The `tags` uniqueness index is unique over
+  `COALESCE()` expressions, which needs functional key parts; MariaDB has never
+  supported them at any version. Rather than fail halfway — that migration drops
+  the old constraint and de-duplicates *before* creating the new index — it
+  refuses up front with a clear message and changes nothing. The same guard
+  turns away MySQL below 8.0.13 and any driver the package has never been run
+  against.
 
 ## Install via Composer
 

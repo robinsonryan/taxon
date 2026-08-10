@@ -126,6 +126,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limit, so a tree that is exactly that deep is not mistaken for one that is too
   deep. Consumers with a published config file should add the key, or accept the
   64 the code falls back to.
+- **The uniqueness migration refuses an unsupported driver before it changes
+  anything.** Its `'mysql', 'mariadb'` cast arm implied MariaDB worked; it does
+  not, at any version — the index is unique over `COALESCE()` expressions, which
+  needs functional key parts, and MariaDB has none. The failure landed on
+  `CREATE UNIQUE INDEX`, *after* the old constraint had been dropped and the
+  de-duplication had run, leaving the table with no uniqueness at all and a
+  half-applied migration. `up()` now stops first, with a message naming the
+  driver and the reason. MySQL below 8.0.13 (which is where functional key parts
+  arrived) and any driver the package has never been run against are turned away
+  the same way. `docs/installation.md` says so plainly.
 
 ### Breaking
 - **`transitionTo()` throws `UnguardedTransitionException`** where it used to fall
