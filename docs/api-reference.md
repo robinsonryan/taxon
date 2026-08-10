@@ -147,4 +147,5 @@ Tag::childrenOf(string|int $parent)
 | `UnguardedTransitionException` | `transitionTo()` on a definition that declares no guard |
 | `ImmutableTagDefinitionException` | `addValue()`/`removeValue()` on an enum-backed definition |
 | `CircularTagHierarchyException` | `moveTo()` would put a tag inside its own subtree |
+| `CrossTenantTagMoveException` | `moveTo()` would graft a tag under another tenant's parent |
 | `DuplicateTagSlugException` | A write would collide on `(slug, parent, tenant)` |

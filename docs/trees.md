@@ -69,8 +69,8 @@ $frontend->moveTo($ops);    // move under another tag
 $web->moveTo(null);         // promote to a root
 ```
 
-`moveTo()` refuses two moves before touching the database, because neither is
-recoverable afterwards:
+`moveTo()` refuses three moves before touching the database, because none of
+them is recoverable afterwards:
 
 - **Into its own subtree** — `CircularTagHierarchyException`. A cycle is a
   perfectly valid set of rows, so the database will store it; every ancestor walk
@@ -78,8 +78,17 @@ recoverable afterwards:
 - **Onto a slug the destination already holds**, for the same tenant —
   `DuplicateTagSlugException`. The unique index would reject this anyway, but as
   a `QueryException` that also aborts the surrounding PostgreSQL transaction.
+- **Under a parent belonging to another tenant** — `CrossTenantTagMoveException`.
+  A subtree belongs to one tenant, and every other write path propagates the
+  parent's tenant to its children. Grafting across tenants is not a recoverable
+  state: the subtree walks filter on `parent_id` alone, so the destination
+  tenant's `descendants()` starts returning the foreign tag, and `resolvePath()`
+  — which requires every segment to share one tenant — can address it from
+  neither side. "No tenant" is its own space here too, so a tenant-less tag and a
+  tenant-less parent match, and a tenant-less tag may not be grafted under a
+  tenant's parent.
 
-Both leave the tag exactly where it was. Everything beneath the moved tag travels
+All three leave the tag exactly where it was. Everything beneath the moved tag travels
 with it — the subtree hangs off `parent_id`, so nothing else has to be rewritten,
 and the paths of every descendant change accordingly.
 

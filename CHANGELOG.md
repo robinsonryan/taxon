@@ -97,6 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejected every other state in the map. Definitions carrying
   `values() = array_keys(transitions())` as a workaround can drop it; keeping it
   is harmless but also makes the definition's values immutable.
+- **`moveTo()` no longer grafts a tag into another tenant's tree**, raising the
+  new `CrossTenantTagMoveException` instead. A subtree belongs to one tenant and
+  every other write path propagates the parent's tenant down; `moveTo()` was the
+  one API that could break it, and the result was not recoverable — the subtree
+  walks filter on `parent_id` alone, so the destination tenant's `descendants()`
+  returned the foreign tag, and `resolvePath()`, which requires every segment to
+  share one tenant, could address it from neither side. Tenants are compared the
+  way the unique index compares them: NULL and `''` are both "no tenant", and "no
+  tenant" is its own space, so a tenant-less tag may not be grafted under a
+  tenant's parent either. Promoting a tag to a root (`moveTo(null)`) is
+  unaffected.
 
 ### Breaking
 - **`transitionTo()` throws `UnguardedTransitionException`** where it used to fall

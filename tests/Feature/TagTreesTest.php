@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
 use RobinsonRyan\Taxon\Exceptions\CircularTagHierarchyException;
+use RobinsonRyan\Taxon\Exceptions\CrossTenantTagMoveException;
 use RobinsonRyan\Taxon\Exceptions\DuplicateTagSlugException;
 use RobinsonRyan\Taxon\Models\Tag;
 
@@ -240,5 +241,84 @@ describe('re-parenting', function (): void {
         $web->moveTo($topics);
 
         expect($web->fresh()->parent_id)->toBe($topics->id);
+    });
+});
+
+describe('re-parenting stays inside one tenant', function (): void {
+    it('refuses to graft a tag under another tenant\'s parent', function (): void {
+        buildTopicTree('tenant-a');
+        $b = Tag::createCategory('Topics', 'tenant-b');
+        $web = Tag::resolvePath('topics/web', 'tenant-a');
+
+        $web->moveTo($b);
+    })->throws(CrossTenantTagMoveException::class);
+
+    it('refuses to graft a tenant-less tag under a tenant\'s parent', function (): void {
+        buildTopicTree();
+        $b = Tag::createCategory('Topics', 'tenant-b');
+        $web = Tag::resolvePath('topics/web');
+
+        $web->moveTo($b);
+    })->throws(CrossTenantTagMoveException::class);
+
+    it('refuses to graft a tenant\'s tag under a tenant-less parent', function (): void {
+        buildTopicTree('tenant-a');
+        $global = Tag::createCategory('Shared');
+        $web = Tag::resolvePath('topics/web', 'tenant-a');
+
+        $web->moveTo($global);
+    })->throws(CrossTenantTagMoveException::class);
+
+    it('leaves the tag, and both tenants\' walks, exactly as they were', function (): void {
+        $topics = buildTopicTree('tenant-a');
+        $b = Tag::createCategory('Topics', 'tenant-b');
+        $web = Tag::resolvePath('topics/web', 'tenant-a');
+
+        try {
+            $web->moveTo($b);
+        } catch (CrossTenantTagMoveException) {
+            // expected
+        }
+
+        expect($web->fresh()->parent_id)->toBe($topics->id)
+            ->and($b->descendants()->all())->toBe([])
+            ->and(Tag::resolvePath('topics/web', 'tenant-a'))->not->toBeNull();
+    });
+
+    it('names both tenants in the message', function (): void {
+        buildTopicTree('tenant-a');
+        $b = Tag::createCategory('Topics', 'tenant-b');
+        $web = Tag::resolvePath('topics/web', 'tenant-a');
+
+        expect(fn (): Tag => $web->moveTo($b))
+            ->toThrow(CrossTenantTagMoveException::class, "tenant 'tenant-b'");
+    });
+
+    it('allows a move within one tenant', function (): void {
+        $topics = buildTopicTree('tenant-a');
+        $frontend = Tag::resolvePath('topics/web/frontend', 'tenant-a');
+
+        $frontend->moveTo($topics);
+
+        expect($frontend->fresh()->parent_id)->toBe($topics->id);
+    });
+
+    it('allows a move between two tenant-less tags', function (): void {
+        $topics = buildTopicTree();
+        $frontend = Tag::resolvePath('topics/web/frontend');
+
+        $frontend->moveTo($topics);
+
+        expect($frontend->fresh()->parent_id)->toBe($topics->id);
+    });
+
+    it('still promotes a tenant\'s tag to a root', function (): void {
+        buildTopicTree('tenant-a');
+        $web = Tag::resolvePath('topics/web', 'tenant-a');
+
+        $web->moveTo(null);
+
+        expect($web->fresh()->parent_id)->toBeNull()
+            ->and($web->fresh()->tenant_id)->toBe('tenant-a');
     });
 });

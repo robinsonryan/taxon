@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RobinsonRyan\Taxon\Concerns\ConfiguresIdentifiers;
 use RobinsonRyan\Taxon\Exceptions\CircularTagHierarchyException;
+use RobinsonRyan\Taxon\Exceptions\CrossTenantTagMoveException;
 use RobinsonRyan\Taxon\Exceptions\DuplicateTagSlugException;
 use RobinsonRyan\Taxon\Exceptions\TagInUseException;
 use RobinsonRyan\Taxon\HasTags;
@@ -387,19 +388,23 @@ class Tag extends Model
     /**
      * Re-parent this tag; pass null to make it a root.
      *
-     * Two things are checked before the write, because neither is something the
-     * caller can recover from afterwards: moving a tag into its own subtree
-     * (which the database would happily store, and which would then hang every
-     * ancestor walk), and landing on a slug the destination already holds
+     * Three things are checked before the write, because none of them is
+     * something the caller can recover from afterwards: moving a tag into its
+     * own subtree (which the database would happily store, and which would then
+     * hang every ancestor walk), landing on a slug the destination already holds
      * (which the unique index would reject as a QueryException, taking the
-     * surrounding PostgreSQL transaction down with it).
+     * surrounding PostgreSQL transaction down with it), and grafting a tag into
+     * another tenant's tree (which every subtree walk would then leak, and which
+     * `resolvePath()` could address from neither side).
      *
      * @throws CircularTagHierarchyException when the destination is this tag or one of its descendants
+     * @throws CrossTenantTagMoveException when the destination belongs to another tenant
      * @throws DuplicateTagSlugException when the destination already holds this slug for this tenant
      */
     public function moveTo(?self $newParent): static
     {
         if ($newParent instanceof Tag) {
+            $this->assertSameTenantAs($newParent);
             $this->assertNotInOwnSubtree($newParent);
         }
 
@@ -410,6 +415,32 @@ class Tag extends Model
         $this->unsetRelation('parent');
 
         return $this;
+    }
+
+    /**
+     * A subtree belongs to one tenant. Every other write path propagates the
+     * parent's tenant to its children — `addChild()`, `createValue()` through a
+     * definition, `valueTag()` — so this is the one API that could break it.
+     *
+     * Compared the way the unique index compares tenants: NULL and '' are both
+     * "no tenant", and "no tenant" is its own space rather than a wildcard.
+     */
+    protected function assertSameTenantAs(self $newParent): void
+    {
+        $tenantColumn = config('taxon.tenant.column', 'tenant_id');
+        $tenantId = $this->{$tenantColumn};
+        $parentTenantId = $newParent->{$tenantColumn};
+
+        if ((string) ($tenantId ?? '') === (string) ($parentTenantId ?? '')) {
+            return;
+        }
+
+        throw new CrossTenantTagMoveException(
+            $this,
+            $newParent,
+            is_string($tenantId) ? $tenantId : null,
+            is_string($parentTenantId) ? $parentTenantId : null,
+        );
     }
 
     protected function assertNotInOwnSubtree(self $newParent): void
