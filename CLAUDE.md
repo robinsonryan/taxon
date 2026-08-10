@@ -112,8 +112,8 @@ before inventing a variant.
 
 # What is actually in here
 
-Namespace `RobinsonRyan\Taxon\`, PSR-4 from `src/`. It is small: **16 files and
-~1,955 lines** in `src/`, plus one config and three migrations. Auto-discovered via
+Namespace `RobinsonRyan\Taxon\`, PSR-4 from `src/`. It is small: **18 files and
+~2,255 lines** in `src/`, plus one config and three migrations. Auto-discovered via
 `extra.laravel.providers → TaxonServiceProvider`, which only merges config and
 registers the `taxon-config` / `taxon-migrations` publish tags — no bindings, no
 commands, no routes.
@@ -203,8 +203,10 @@ fixture models use it too.
 through children) · `InvalidTagValueException` · `InvalidTransitionException` ·
 `UnguardedTransitionException` (`transitionTo()` on a definition that declares no
 guard) · `ImmutableTagDefinitionException` · `CircularTagHierarchyException`
-(`moveTo()` into the tag's own subtree) · `DuplicateTagSlugException` (a write
-would collide on `(slug, parent, tenant)`).
+(`moveTo()` into the tag's own subtree) · `CrossTenantTagMoveException`
+(`moveTo()` under another tenant's parent) · `TagDepthExceededException` (a tree
+walk passed `taxon.max_tree_depth` edges — in practice, a cycle in `parent_id`)
+· `DuplicateTagSlugException` (a write would collide on `(slug, parent, tenant)`).
 
 ## Gotchas — the things that will actually bite
 
@@ -262,8 +264,14 @@ appears in the config file and is referenced nowhere in `src/`.
 **The transition contract is inherited API, and it is loud.** As of 0.4.0
 `TagDefinition` supplies `transitions()` (null = no state machine declared),
 `default()`, `canTransition()` (reads the map) and `availableTransitions()`
-(walks the map, filtered through `canTransition()`), plus `guardsTransitions()`
-and `normalizeState()`. `HasTags::transitionTo()` no longer duck-types: a
+(walks the map, filtered through `canTransition()`), plus `guardsTransitions()`,
+`normalizeState()`, `declaredStates()` and `declaresState()`. The map is the
+vocabulary: with no `default()` the *first* state must be one the map mentions
+(it used to fall through to `isValidValue()`, which says yes to everything when
+`values()` is empty), and a database-backed definition's `values()` includes the
+map's states whether or not tags exist for them. Map **keys** are matched on the
+stored value first and `normalizeState()` second, so `'In Progress' => [...]` is
+no longer a state nothing can leave. `HasTags::transitionTo()` no longer duck-types: a
 definition declaring **neither** a map **nor** a `canTransition()` override gets
 `UnguardedTransitionException` rather than the silent unguarded write it used to
 get. `setTagAs()` is the unguarded write. PHP rejects a narrower parameter type
@@ -273,7 +281,14 @@ example and `ClearanceDefinition.php` is the code-only-guard one.
 
 **Trees are `Tag`'s, categories are `HasTags`'.** `path()`, `resolvePath()`,
 `ancestors()`, `descendants()` and `moveTo()` work at any depth (the two walks
-use recursive CTEs — two queries each, whatever the depth). The category API is
+use recursive CTEs — two queries each, whatever the depth). Both walks are
+**bounded** at `config('taxon.max_tree_depth')` edges (64) and raise
+`TagDepthExceededException` past it: a recursive CTE over an adjacency list spins
+forever on a cycle, and killing the client does not stop the query. `moveTo()`
+runs in a transaction that locks the tag, the destination and the destination's
+ancestors in primary-key order *before* re-checking for a cycle — the check used
+to be check-then-write, and two opposing concurrent moves could commit one
+between them. The category API is
 still hard-wired to two levels and nothing here changed that: nesting a
 category's values deeper does not make them visible to `tagsIn()` or
 `withTagIn()`. `docs/trees.md` states the boundary.
