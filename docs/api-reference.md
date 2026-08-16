@@ -74,6 +74,23 @@ Model::withAnyTagIn(string $category, array $values)
 Model::withoutTagIn(string $category, string $value)
 ```
 
+### How a value is matched
+
+Every scope and every `has*` check matches a value against **all the spellings it
+could have been stored under**: the value as given, `Str::slug()` of it, and that
+slug with hyphens turned back into underscores. So `'in_progress'`,
+`'in-progress'` and `'In Progress'` all find the same tag, whichever of them the
+tag was created under.
+
+That looseness exists because writes are not loose. The string API stores the
+slug, but `TagDefinition::valueTag()` stores an enum's backing value verbatim, so
+`MyStatus::IN_PROGRESS` is stored as `in_progress` and slugging a query value
+would never find it. Reading widely and writing one canonical slug is deliberate:
+`Enum::from($tag->slug)` has to round-trip.
+
+`withoutTag()` and `withoutTagIn()` exclude the same spellings their positive
+counterparts include — they are complements, not independent filters.
+
 ## Tag Model Methods
 
 ### Factory Methods

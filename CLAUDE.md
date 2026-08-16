@@ -318,10 +318,19 @@ resolves via `callback` first, then `resolver => 'auth'` reading
 absent is `tenant_id`; the config file wins). A definition with
 `public static bool $global = true` bypasses tenancy entirely.
 
-**Slugging is `Str::slug()` everywhere**, applied on both write and lookup, so
-`'Web Development'` and `'web-development'` are the same tag. Direct tags and
-categories share the root namespace (`parent_id IS NULL`), so
-`$post->tag('status')` can collide with a `status` category.
+**Writes slug, reads match every spelling.** The string API stores
+`Str::slug()` of what it is given, so `'Web Development'` and
+`'web-development'` are the same tag — but `TagDefinition::valueTag()` stores an
+enum's backing value *verbatim*, underscores and all, because
+`Enum::from($tag->slug)` has to round-trip. Reads therefore cannot slug
+unconditionally: `HasTags::tagSlugCandidates()` expands a value into the value as
+given, its slug, and that slug re-underscored, and every read path matches with
+`whereIn`/`in_array` [T: src/HasTags.php, tests/Feature/UnderscoreSlugMatchingTest.php].
+Write paths (`resolveOrCreateTags()`, `resolveOrCreateValueTag()`,
+`valueTag()`) keep minting one canonical slug apiece — widening those would need
+a data migration. Direct tags and categories share the root namespace
+(`parent_id IS NULL`), so `$post->tag('status')` can collide with a `status`
+category.
 
 ## Docs
 

@@ -13,9 +13,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Proposed as **0.4.0**. It breaks compatibility in four places, all listed under
-> *Breaking* below; under the 0.x contract that is what a minor is for. Ryan cuts
-> the tag.
+> Two things sit here. The **slug-matching fix** immediately below landed after
+> `v0.4.0` was tagged and is proposed as **0.4.1** — it only widens what the read
+> paths match, so nothing that resolved before stops resolving. Everything from
+> *Added* down is the already-tagged `v0.4.0`, which broke compatibility in four
+> places, all listed under *Breaking*. Ryan cuts the tags.
+
+### Fixed
+- **Query scopes could not see a tag stored under an underscore.** Writes and
+  reads had never agreed on a spelling: `TagDefinition::valueTag()` stores an
+  enum's backing value verbatim (`in_progress`), while every read path ran the
+  caller's value through `Str::slug()` and looked for `in-progress`. Any
+  enum-backed status whose backing value contains an underscore was therefore
+  unfindable — `withTagIn()`, `hasTagAs()` and their siblings simply returned
+  nothing, with no error to say why. The same mismatch hid a category whose
+  definition `$slug` is underscored, since `TagDefinition::tag()` stores that
+  verbatim too.
+
+  The read paths now match a value against **every spelling it could have been
+  stored under** — the value as given, its slug, and that slug re-underscored —
+  with `whereIn`/`in_array` rather than `=`. Affected: `hasTag()`, `hasAnyTag()`,
+  `hasAllTags()`, `hasTagIn()`, `hasAnyTagIn()`, `hasAllTagsIn()`, `hasTagAs()`,
+  `tagsIn()` (and `getTagIn()`/`getTagValueIn()` through it), `withTag()`,
+  `withAnyTag()`, `withAllTags()`, `withoutTag()`, `withTagIn()`,
+  `withAnyTagIn()`, `withoutTagIn()`, `untag()`, `removeTag()` and
+  `removeTagsIn()`.
+
+  **What gets stored is unchanged.** `valueTag()`, `tag()` and the string API
+  still mint one canonical slug apiece, because `Enum::from($tag->slug)` depends
+  on the backing value surviving the round trip. This is a widening of the read
+  side only.
+
+  Two consequences worth naming: `withoutTag()` / `withoutTagIn()` now *exclude*
+  the alternate spellings too, which is the point — they are the complement of
+  `withTag()` and used to disagree with it; and `removeTag()` now clears every
+  matching spelling rather than one arbitrary row, so a stray duplicate can no
+  longer swallow a removal.
 
 ### Added
 - **The transition contract is real API on `TagDefinition`.** `transitions()`,
