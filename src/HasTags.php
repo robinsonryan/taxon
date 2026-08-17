@@ -19,6 +19,20 @@ use RobinsonRyan\Taxon\Models\Taggable;
 
 trait HasTags
 {
+    /**
+     * Tag attributes assigned before this model had a key, waiting for one.
+     *
+     * @var array<string, mixed>
+     */
+    protected array $pendingTagAttributes = [];
+
+    public static function bootHasTags(): void
+    {
+        static::saved(function (self $model): void {
+            $model->flushPendingTagAttributes();
+        });
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Magic Attribute Access
@@ -39,12 +53,42 @@ trait HasTags
     {
         // Check if this key is a declared tag attribute
         if ($this->isTagAttribute($key)) {
-            $this->setTagAttributeValue($key, $value);
+            // A tag attribute lives in the `taggables` pivot, and a pivot row
+            // needs this model's key. On an unsaved model there is not one yet
+            // — fill() runs before the INSERT, which is why a factory
+            // definition() naming a tag attribute used to die on a null
+            // `taggable_id`. Hold the value and write it on `saved` instead.
+            if ($this->exists) {
+                $this->setTagAttributeValue($key, $value);
+            } else {
+                $this->pendingTagAttributes[$key] = $value;
+            }
 
             return $this;
         }
 
         return parent::setAttribute($key, $value);
+    }
+
+    /**
+     * Write the assignments that were waiting for a key, now that there is one.
+     *
+     * Cleared before the writes rather than after: setTagAttributeValue() runs
+     * arbitrary definition code, and anything in there that saves this model
+     * again must not replay the same assignments.
+     */
+    protected function flushPendingTagAttributes(): void
+    {
+        if ($this->pendingTagAttributes === []) {
+            return;
+        }
+
+        $pending = $this->pendingTagAttributes;
+        $this->pendingTagAttributes = [];
+
+        foreach ($pending as $key => $value) {
+            $this->setTagAttributeValue($key, $value);
+        }
     }
 
     protected function isTagAttribute(string $key): bool

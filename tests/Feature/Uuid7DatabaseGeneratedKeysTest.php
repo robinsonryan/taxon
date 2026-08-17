@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Support\SchemaSupport;
+use RobinsonRyan\Taxon\Tests\Fixtures\Models\Uuid7TestModel;
 
 /*
 |--------------------------------------------------------------------------
@@ -156,5 +157,48 @@ describe('the key comes from the database', function (): void {
 
         expect($value->getKey())->toBeUuidV7()
             ->and($value->parent_id)->toBe($category->getKey());
+    });
+});
+
+describe('a factory whose definition() mass-assigns a tag attribute', function (): void {
+    it('persists the record', function (): void {
+        $model = Uuid7TestModel::factory()->create();
+
+        expect($model->exists)->toBeTrue()
+            ->and($model->getKey())->toBeUuidV7()
+            ->and(DB::connection(UUID7_CONNECTION)->table('uuid7_test_models')->count())->toBe(1);
+    });
+
+    it('persists its pivot row, pointed at the record', function (): void {
+        $model = Uuid7TestModel::factory()->create();
+
+        $pivot = DB::connection(UUID7_CONNECTION)->table('taggables')
+            ->where('taggable_id', $model->getKey())
+            ->first();
+
+        expect($pivot)->not->toBeNull()
+            ->and($pivot->taggable_type)->toBe(Uuid7TestModel::class);
+    });
+
+    it('gives the pivot row a database-generated key, because attach() supplies none', function (): void {
+        $model = Uuid7TestModel::factory()->create();
+
+        $pivotId = DB::connection(UUID7_CONNECTION)->table('taggables')
+            ->where('taggable_id', $model->getKey())
+            ->value('id');
+
+        expect($pivotId)->toBeUuidV7();
+    });
+
+    it('reads the tag back off the saved model', function (): void {
+        $model = Uuid7TestModel::factory()->create();
+
+        expect($model->status)->toBe('pending');
+    });
+
+    it('tags each of a batch, and none of them twice', function (): void {
+        Uuid7TestModel::factory()->count(3)->create();
+
+        expect(DB::connection(UUID7_CONNECTION)->table('taggables')->count())->toBe(3);
     });
 });
