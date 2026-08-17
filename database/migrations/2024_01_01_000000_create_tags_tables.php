@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use RobinsonRyan\Taxon\Support\SchemaSupport;
 
 return new class extends Migration
 {
@@ -20,12 +21,7 @@ return new class extends Migration
 
         Schema::create($tagTable, function (Blueprint $table) use ($tagTable, $tenantColumn, $useUuid) {
             if ($useUuid) {
-                $table->uuid('id');
-                // Declared explicitly rather than fluently as ->primary(): a fluent
-                // primary key is compiled into a command appended AFTER the
-                // self-referencing parent_id foreign key below, and PostgreSQL
-                // rejects a foreign key whose target has no unique constraint yet.
-                $table->primary('id');
+                SchemaSupport::uuidPrimary($table);
             } else {
                 $table->id();
             }
@@ -57,7 +53,7 @@ return new class extends Migration
 
         Schema::create($pivotTable, function (Blueprint $table) use ($tagTable, $tenantColumn, $useUuid, $taggableUsesUuid) {
             if ($useUuid) {
-                $table->uuid('id')->primary();
+                SchemaSupport::uuidPrimary($table);
                 $table->uuid('tag_id');
                 $table->foreign('tag_id')
                     ->references('id')
