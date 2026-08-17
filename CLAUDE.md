@@ -244,9 +244,31 @@ never in `testing`.
 **A self-referencing foreign key needs its primary key declared explicitly.**
 `$table->uuid('id')->primary()` compiles the primary key into a command appended
 *after* the `foreign('parent_id')` command, so Postgres rejects the FK — its
-target has no unique constraint yet. The `tags` migration therefore calls
-`$table->primary('id')` as its own statement. SQLite hides this too (it folds
-foreign keys into the create).
+target has no unique constraint yet. `Support\SchemaSupport::uuidPrimary()` calls
+`$table->primary('id')` as its own statement for exactly this reason, and both
+uuid key columns go through it. SQLite hides this too (it folds foreign keys into
+the create).
+
+**In uuid7 mode PostgreSQL generates the keys and PHP never does.** As of 0.5.0
+`ConfiguresIdentifiers` sets `$incrementing = true` and `$keyType = 'string'` and
+stops there — no `creating` hook, no `Str::uuid7()`. `$incrementing = true` beside
+a UUID is not a mistake: in Eloquent it means "the database assigns the key on
+insert", and it is what makes the INSERT compile with `returning "id"` so the
+generated key comes back. Set it false and `create()` hands you a null key. The
+column default is therefore load-bearing, which is what
+`SchemaSupport::uuidPrimary()` and the `add_default_uuidv7_to_taxon_ids` migration
+exist for — and `attach()` writes the pivot through the **query builder**, never
+through a model, so no model hook could have covered `taggables.id` anyway.
+`tests/Feature/Uuid7DatabaseGeneratedKeysTest.php` is the guard; its decisive case
+drops the column default and asserts the insert then fails.
+
+**A tag attribute assigned on an unsaved model is held, not written.** The write
+lands in the `taggables` pivot and needs the model's key, which does not exist
+during `fill()` — so a factory `definition()` naming a tag attribute used to die
+on a null `taggable_id`. `HasTags::setAttribute()` now stashes the value in
+`$pendingTagAttributes` and `bootHasTags()`'s `saved` listener flushes it. On a
+model that already exists the write still goes through immediately, without a
+`save()`; that is long-standing behaviour and deliberately unchanged.
 
 **`config('taxon.tag_model')` is honored in exactly one place** —
 `HasTags::tags()`, when building the `morphToMany`. Every other write path

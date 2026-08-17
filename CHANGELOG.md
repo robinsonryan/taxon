@@ -11,13 +11,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
 > It will go to `1.0.0` when the consuming apps ship publicly.
 
-## [Unreleased]
+## [0.5.0] - 2026-08-17
 
-> Two things sit here. The **slug-matching fix** immediately below landed after
-> `v0.4.0` was tagged and is proposed as **0.4.1** — it only widens what the read
-> paths match, so nothing that resolved before stops resolving. Everything from
-> *Added* down is the already-tagged `v0.4.0`, which broke compatibility in four
-> places, all listed under *Breaking*. Ryan cuts the tags.
+> **Read this before upgrading.** In `uuid7` mode this release stops generating
+> primary keys in PHP and lets PostgreSQL generate them, which is a breaking
+> change for anyone whose `tags.id` and `taggables.id` columns do not already
+> carry a `uuidv7()` default. **Take this release and run the new migration in
+> the same deploy.** Skip the migration and the next tag or tag assignment fails
+> with a not-null violation on `id`.
+>
+> Installs running the shipped default (`id_type => incrementing`) are unaffected
+> by the key change and need nothing. The migration is a no-op for them.
+>
+> This is why it is a minor rather than a patch: under Composer's caret-on-zero
+> rule a `^0.4.0` consumer would have taken a patch silently, and found out at
+> the next insert.
+
+### Upgrading
+
+1. `composer require robinsonryan/taxon:^0.5.0`
+2. `php artisan vendor:publish --tag=taxon-migrations --force` — this brings in
+   `add_default_uuidv7_to_taxon_ids`, and refreshes the create migration for
+   anyone installing fresh.
+3. `php artisan migrate`
+
+The new migration adds `default uuidv7()` to `tags.id` and `taggables.id` where
+they are uuid columns and the connection has the function. It is a plain
+`SET DEFAULT`, so running it twice is the same as running it once, and it leaves
+a bigint install alone.
+
+Requires **PostgreSQL 18 or later** in `uuid7` mode — `uuidv7()` is a PostgreSQL
+18 built-in, and it is now the only thing generating these keys.
+
+### Breaking
+
+- **Taxon no longer generates UUID7 keys in PHP.** `ConfiguresIdentifiers`
+  registered a `creating` hook calling `Str::uuid7()`, so the `uuidv7()` column
+  default a consumer's schema carried had never once fired. The database
+  generates the key now, and the migration above is what guarantees there is
+  something to generate it.
+- **`getIncrementing()` returns `true` in `uuid7` mode**, where it used to return
+  `false`. This reads oddly beside a UUID and is deliberate: in Eloquent
+  `$incrementing` means "the database assigns the key on insert", which is
+  exactly what a column default does. It is what makes the INSERT compile with
+  PostgreSQL's `returning "id"` clause so the generated key is read back — with
+  it false, `create()` hands you a model with a null key. Anything asserting
+  `getIncrementing() === false` for uuid7 tags needs updating.
+- **The key type is read once, when a model is constructed**, rather than on
+  every `getIncrementing()` / `getKeyType()` call. Changing `taxon.id_type` at
+  runtime no longer affects models that already exist in memory. Configuration
+  set at boot, which is every real installation, is unaffected.
+
+### Fixed
+
+- **A tag attribute assigned before the model existed took the write down with
+  it.** `setAttribute()` routed a declared tag attribute straight into a
+  `taggables` pivot write, and a pivot row needs the model's key. During mass
+  assignment — a factory `definition()`, `Model::create()`, any `fill()` on a new
+  instance — `fill()` runs before the INSERT, so the key was null and the write
+  failed on a not-null `taggable_id`. Naming a tag attribute in a factory was
+  therefore impossible.
+
+  An assignment on an **unsaved** model is now held and written on `saved`. On a
+  model that already exists nothing changes: it still writes straight through,
+  immediately, without a `save()` — the long-standing behaviour, surprising or
+  not.
+
+  This was never about the id strategy. The key is null during `fill()` whichever
+  end generates it, so bigint installs hit it too.
+
+- **`taggables.id` had nothing to generate it in `uuid7` mode.** The create
+  migration declared both key columns without a database default, and
+  `attach()` writes the pivot through the query builder rather than through a
+  model — so no model hook could ever have covered it. Both columns now get the
+  default, applied through `Support\SchemaSupport`, which probes the connection
+  first so the migration still runs on SQLite, MySQL and PostgreSQL below 18.
+
+### Added
+
+- `RobinsonRyan\Taxon\Support\SchemaSupport` — `uuidPrimary()` and
+  `supportsUuidV7()`, the driver-aware helpers the migrations use.
+- Test coverage for `uuid7` mode through Eloquent, on PostgreSQL, which the suite
+  had never had: the whole branch was previously exercised only at the catalog
+  level, through the query builder.
+
+## [0.4.1] - 2026-08-16
 
 ### Fixed
 - **Query scopes could not see a tag stored under an underscore.** Writes and
@@ -49,6 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `withTag()` and used to disagree with it; and `removeTag()` now clears every
   matching spelling rather than one arbitrary row, so a stray duplicate can no
   longer swallow a removal.
+
+## [0.4.0] - 2026-08-09
 
 ### Added
 - **The transition contract is real API on `TagDefinition`.** `transitions()`,

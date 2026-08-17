@@ -37,6 +37,24 @@ function taxonMigrationFiles(): array
     return array_values($files);
 }
 
+/**
+ * Where the uniqueness migration sits in the ordered file list.
+ *
+ * Addressed by name rather than as "the last file": migrations are added to this
+ * package over time, and a positional reference silently starts pointing at
+ * whichever one shipped most recently.
+ */
+function uniquenessMigrationIndex(): int
+{
+    foreach (taxonMigrationFiles() as $index => $file) {
+        if (str_contains($file, 'harden_tags_unique_index_against_nulls')) {
+            return $index;
+        }
+    }
+
+    throw new RuntimeException('The tags uniqueness migration is missing from database/migrations.');
+}
+
 /** Run the package migrations at the given positions, in order, on the probe connection. */
 function runTaxonMigrations(int $from, ?int $to = null): void
 {
@@ -50,6 +68,12 @@ function runTaxonMigrations(int $from, ?int $to = null): void
             $migration->up();
         }
     }
+}
+
+/** Run only the uniqueness migration — the one every case here is about. */
+function runUniquenessMigration(): void
+{
+    runTaxonMigrations(uniquenessMigrationIndex(), uniquenessMigrationIndex() + 1);
 }
 
 function dropDedupTables(): void
@@ -115,7 +139,7 @@ beforeEach(function (): void {
 
     // Everything up to, but not including, the uniqueness migration: this is the
     // schema a consumer is upgrading from, duplicates and all.
-    runTaxonMigrations(0, count(taxonMigrationFiles()) - 1);
+    runTaxonMigrations(0, uniquenessMigrationIndex());
 });
 
 afterEach(function (): void {
@@ -135,7 +159,7 @@ it('collapses a duplicate group onto its oldest member', function (): void {
     $keep = insertDedupTag('topics');
     $loser = insertDedupTag('topics');
 
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     $survivors = DB::connection(DEDUP_CONNECTION)->table('tags')->where('slug', 'topics')->pluck('id')->all();
 
@@ -148,7 +172,7 @@ it('carries the loser\'s pivot rows across to the survivor', function (): void {
     $loser = insertDedupTag('topics');
     insertDedupTaggable($loser, 42);
 
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     $rows = DB::connection(DEDUP_CONNECTION)->table('taggables')->get();
 
@@ -162,7 +186,7 @@ it('drops a pivot row that collapsing would have duplicated', function (): void 
     insertDedupTaggable($keep, 42);
     insertDedupTaggable($loser, 42);
 
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     expect(DB::connection(DEDUP_CONNECTION)->table('taggables')->count())->toBe(1);
 });
@@ -173,7 +197,7 @@ it('re-parents the children of a collapsed duplicate', function (): void {
     insertDedupTag('php', $keep);
     insertDedupTag('laravel', $loser);
 
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     $children = DB::connection(DEDUP_CONNECTION)->table('tags')
         ->where('parent_id', $keep)
@@ -191,7 +215,7 @@ it('collapses children that collide only after their parents are merged', functi
     insertDedupTag('php', $keep);
     insertDedupTag('php', $loser);
 
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     expect(DB::connection(DEDUP_CONNECTION)->table('tags')->count())->toBe(2);
 });
@@ -199,14 +223,14 @@ it('collapses children that collide only after their parents are merged', functi
 it('rejects the duplicate once the migration has run', function (): void {
     insertDedupTag('topics');
 
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     expect(fn (): int => insertDedupTag('topics'))
         ->toThrow(QueryException::class);
 });
 
 it('adds the parent_id index the tree walks depend on', function (): void {
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
     $indexes = DB::connection(DEDUP_CONNECTION)->table('pg_indexes')
         ->where('tablename', 'tags')
@@ -217,10 +241,9 @@ it('adds the parent_id index the tree walks depend on', function (): void {
 });
 
 it('is reversible back to the schema it replaced', function (): void {
-    runTaxonMigrations(count(taxonMigrationFiles()) - 1);
+    runUniquenessMigration();
 
-    $files = taxonMigrationFiles();
-    $migration = require $files[count($files) - 1];
+    $migration = uniquenessMigration();
     expect($migration)->toBeInstanceOf(Migration::class);
     $migration->down();
 
@@ -248,30 +271,28 @@ it('is reversible back to the schema it replaced', function (): void {
 |
 */
 
-function lastTaxonMigration(): object
+function uniquenessMigration(): object
 {
-    $files = taxonMigrationFiles();
-
-    return require $files[count($files) - 1];
+    return require taxonMigrationFiles()[uniquenessMigrationIndex()];
 }
 
 it('refuses to run on MariaDB', function (): void {
-    expect(fn () => lastTaxonMigration()->assertDriverSupported('mariadb', '10.11.6'))
+    expect(fn () => uniquenessMigration()->assertDriverSupported('mariadb', '10.11.6'))
         ->toThrow(RuntimeException::class, 'MariaDB');
 });
 
 it('refuses a MariaDB server reported through the mysql driver', function (): void {
-    expect(fn () => lastTaxonMigration()->assertDriverSupported('mysql', '10.11.6-MariaDB'))
+    expect(fn () => uniquenessMigration()->assertDriverSupported('mysql', '10.11.6-MariaDB'))
         ->toThrow(RuntimeException::class, 'MariaDB');
 });
 
 it('refuses MySQL older than functional key parts', function (): void {
-    expect(fn () => lastTaxonMigration()->assertDriverSupported('mysql', '5.7.44'))
+    expect(fn () => uniquenessMigration()->assertDriverSupported('mysql', '5.7.44'))
         ->toThrow(RuntimeException::class, '8.0.13');
 });
 
 it('accepts the drivers that can build the index', function (): void {
-    $migration = lastTaxonMigration();
+    $migration = uniquenessMigration();
 
     $migration->assertDriverSupported('pgsql');
     $migration->assertDriverSupported('sqlite');
@@ -282,12 +303,12 @@ it('accepts the drivers that can build the index', function (): void {
 });
 
 it('refuses a driver it has never been run against', function (): void {
-    expect(fn () => lastTaxonMigration()->assertDriverSupported('sqlsrv', '16.0'))
+    expect(fn () => uniquenessMigration()->assertDriverSupported('sqlsrv', '16.0'))
         ->toThrow(RuntimeException::class, 'sqlsrv');
 });
 
 it('names the migration and points at the docs, so the message is actionable', function (): void {
-    expect(fn () => lastTaxonMigration()->assertDriverSupported('mariadb', '11.4.2'))
+    expect(fn () => uniquenessMigration()->assertDriverSupported('mariadb', '11.4.2'))
         ->toThrow(RuntimeException::class, 'docs/installation.md');
 });
 
@@ -302,7 +323,7 @@ it('drops nothing when it refuses the driver', function (): void {
     ]);
     config()->set('database.default', 'taxon_unsupported_probe');
 
-    expect(fn () => lastTaxonMigration()->up())->toThrow(RuntimeException::class);
+    expect(fn () => uniquenessMigration()->up())->toThrow(RuntimeException::class);
 
     config()->set('database.default', DEDUP_CONNECTION);
 

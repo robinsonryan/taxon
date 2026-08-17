@@ -5,6 +5,35 @@
 
 ## Queued
 
+### Every tag assignment costs a `load('tags')`, whether or not anyone reads it
+- **Added**: 2026-08-17 · v0.5.0 uuid7 compliance build
+- **Tier**: SOLO
+- **Why deferred**: it is a live behaviour change on a hot path in every consumer,
+  and nothing in the 0.5.0 scope depends on it. Worth doing deliberately, with the
+  semantics argued out first, rather than folded into a release about key generation.
+- **Context**: `setTag()`, `addTag()`, `setTagAs()`, `addTagAs()`, `removeTag()`,
+  `removeTagsIn()`, `tag()`, `untag()`, `retag()` and `detachAllTags()` each end with
+  `$this->load('tags')` — one extra query per call, taken whether the caller reads
+  `$model->tags` afterwards or not. Filling three tag attributes on one model is
+  three of them. `unsetRelation('tags')` would give the same observable answer
+  lazily, but only if nothing depends on the relation being *loaded* rather than
+  merely correct — `hasTag()`/`hasAnyTag()`/`hasAllTags()` read `$this->tags`
+  directly, so the two are equivalent there, but a consumer holding an already-loaded
+  collection is a case to check before changing anything.
+
+### Assigning a tag attribute on a saved model persists with no `save()`
+- **Added**: 2026-08-17 · v0.5.0 uuid7 compliance build
+- **Tier**: SOLO — but it is an API decision first, not a code change
+- **Why deferred**: established behaviour, and every consumer depends on it today.
+  Changing it is a breaking change that wants its own release note.
+- **Context**: `$model->status = 'complete'` on an existing model writes the pivot
+  row immediately, inside `setAttribute()`. No other Eloquent attribute behaves that
+  way, and a caller who assigns and then discards the model without saving has
+  written to the database anyway. 0.5.0 deliberately left this alone — the new
+  deferral applies only to *unsaved* models, where the old behaviour was an outright
+  crash. If the write-on-assign contract is ever revisited, the deferral machinery
+  (`$pendingTagAttributes`, flushed on `saved`) is already the shape the answer takes.
+
 ### Support Pest 5 / PHPUnit 13 / PHP 8.4+ in the constraint matrix
 - **Added**: 2026-08-07 · harness health & efficiency session — apps are queued to upgrade to Pest 5 for Tia; consuming apps can't move until this package allows it
 - **Tier**: SOLO
