@@ -13,7 +13,16 @@ use Throwable;
  */
 final class SchemaSupport
 {
-    private static ?bool $supportsUuidV7 = null;
+    /**
+     * The capability answer per connection name.
+     *
+     * Keyed by connection, not cached as one boolean, because a process can
+     * migrate several connections in sequence — a tenancy loop over a mixed
+     * fleet — and the first answer is not the answer for the rest.
+     *
+     * @var array<string, bool>
+     */
+    private static array $supportsUuidV7 = [];
 
     /**
      * Declare a UUID primary key, defaulting it in the database only where the
@@ -21,12 +30,14 @@ final class SchemaSupport
      *
      * `uuidv7()` is a PostgreSQL 18 built-in. In uuid7 mode it is the *only*
      * thing that generates a key here: no model in this package mints one in
-     * PHP, and `attach()` writes the pivot row through the query builder rather
-     * than through a model, so nothing but the column default stands between an
-     * assignment and a not-null violation. Applying it unconditionally would
-     * make every migration unrunnable on SQLite and MySQL — and on PostgreSQL
-     * below 18 — so it is applied where it is available and skipped where it is
-     * not.
+     * PHP. `attach()` does go through a pivot model — `tags()` sets
+     * `->using(Taggable::class)`, so the framework takes its
+     * `attachUsingCustomClass` branch and saves `Taggable` instances — but that
+     * model mints nothing either, so nothing but the column default stands
+     * between an assignment and a not-null violation. Applying it
+     * unconditionally would make every migration unrunnable on SQLite and MySQL
+     * — and on PostgreSQL below 18 — so it is applied where it is available and
+     * skipped where it is not.
      *
      * The key is declared with an explicit primary() call rather than the fluent
      * `->primary()` column modifier. Fluent index modifiers only become commands
@@ -51,23 +62,24 @@ final class SchemaSupport
      */
     public static function supportsUuidV7(): bool
     {
-        if (self::$supportsUuidV7 !== null) {
-            return self::$supportsUuidV7;
+        $connection = DB::connection();
+        $name = (string) $connection->getName();
+
+        if (array_key_exists($name, self::$supportsUuidV7)) {
+            return self::$supportsUuidV7[$name];
         }
 
-        $connection = DB::connection();
-
         if ($connection->getDriverName() !== 'pgsql') {
-            return self::$supportsUuidV7 = false;
+            return self::$supportsUuidV7[$name] = false;
         }
 
         try {
             $found = $connection->select("select 1 from pg_proc where proname = 'uuidv7' limit 1");
         } catch (Throwable) {
-            return self::$supportsUuidV7 = false;
+            return self::$supportsUuidV7[$name] = false;
         }
 
-        return self::$supportsUuidV7 = $found !== [];
+        return self::$supportsUuidV7[$name] = $found !== [];
     }
 
     /**
@@ -75,6 +87,6 @@ final class SchemaSupport
      */
     public static function flushCapabilityCache(): void
     {
-        self::$supportsUuidV7 = null;
+        self::$supportsUuidV7 = [];
     }
 }

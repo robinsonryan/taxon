@@ -257,18 +257,40 @@ insert", and it is what makes the INSERT compile with `returning "id"` so the
 generated key comes back. Set it false and `create()` hands you a null key. The
 column default is therefore load-bearing, which is what
 `SchemaSupport::uuidPrimary()` and the `add_default_uuidv7_to_taxon_ids` migration
-exist for — and `attach()` writes the pivot through the **query builder**, never
-through a model, so no model hook could have covered `taggables.id` anyway.
+exist for. `attach()` **does** write the pivot through a model — `tags()` sets
+`->using(Taggable::class)`, so the framework takes its `attachUsingCustomClass`
+branch and saves `Taggable` instances, and a `Taggable::creating` listener fires
+[T: tests/Feature/SchemaSupportTest.php]. What makes the default load-bearing is
+not the absence of a model but the absence of key generation: nothing in this
+package mints a key, on either table.
 `tests/Feature/Uuid7DatabaseGeneratedKeysTest.php` is the guard; its decisive case
 drops the column default and asserts the insert then fails.
 
 **A tag attribute assigned on an unsaved model is held, not written.** The write
 lands in the `taggables` pivot and needs the model's key, which does not exist
 during `fill()` — so a factory `definition()` naming a tag attribute used to die
-on a null `taggable_id`. `HasTags::setAttribute()` now stashes the value in
-`$pendingTagAttributes` and `bootHasTags()`'s `saved` listener flushes it. On a
-model that already exists the write still goes through immediately, without a
-`save()`; that is long-standing behaviour and deliberately unchanged.
+on a null `taggable_id`. `HasTags::setAttribute()` stashes the value in
+`$pendingTagAttributes`, and two things flush it: `bootHasTags()`'s `saved`
+listener, and `HasTags::save()` after `parent::save()` returns. The second is not
+redundant — `saveQuietly()` and `withoutEvents()` suppress the event, and 0.5.0
+therefore persisted the row with **no pivot row and no error**, which is what
+0.5.1 fixed. Flushing clears the pending list before writing, so whichever runs
+first makes the other a no-op. On a model that already exists the write still goes
+through immediately, without a `save()`; that is long-standing behaviour and
+deliberately unchanged.
+
+`HasTags` defining `save()` has two consequences worth knowing before you touch
+it. A consuming model that declares its own `save()` silently wins over the
+trait's and loses the quiet-save backstop — it must call
+`flushPendingTagAttributes()` after `parent::save()`. And a second trait defining
+`save()` on the same model is a fatal collision, resolvable with `insteadof`.
+
+**A pending assignment reads back before the save**, spelled the way the save
+will spell it — `Str::slug()` of a string, an enum's backing value verbatim, and
+promoted to the definition's enum case where it names one. So
+`factory()->make(['status' => 'pending'])->status` answers `'pending'` rather
+than null, and reading before and after `save()` agrees
+[T: tests/Feature/MagicAttributesTest.php].
 
 **`config('taxon.tag_model')` is honored in exactly one place** —
 `HasTags::tags()`, when building the `morphToMany`. Every other write path
