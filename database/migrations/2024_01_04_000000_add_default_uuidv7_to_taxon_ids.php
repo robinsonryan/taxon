@@ -14,10 +14,11 @@ use RobinsonRyan\Taxon\Support\SchemaSupport;
  *
  * Up to 0.5.0 the package minted its own keys in PHP, so a uuid7 install ran
  * happily with no default: `Tag::create()` supplied the key, and only the pivot
- * — written by `attach()` through the query builder, never through a model —
- * depended on anything else. 0.5.0 stops generating keys in PHP entirely, which
- * makes the column default the only thing left. Without this migration the next
- * insert on either table fails with a not-null violation.
+ * depended on anything else. (`attach()` does save a `Taggable` model — `tags()`
+ * sets `->using()` — but that model never minted a key either.) 0.5.0 stops
+ * generating keys in PHP entirely, which makes the column default the only thing
+ * left. Without this migration the next insert on either table fails with a
+ * not-null violation.
  *
  * Only touches uuid-typed columns on a connection that actually has `uuidv7()`.
  * A bigint install is left on its sequence, and a driver without the function is

@@ -33,6 +33,36 @@ trait HasTags
         });
     }
 
+    /**
+     * Persist, then write any assignment that was waiting for a key.
+     *
+     * The `saved` hook above is the normal path, and it stays: it puts the
+     * pivot write inside the model's own save lifecycle, where a consumer's
+     * `saved` observer can already see the tag. But `saveQuietly()` and
+     * `Model::withoutEvents()` suppress that event, and both are common in
+     * seeders — which is precisely where a mass-assigned tag attribute lives.
+     * With the event as the only trigger the row persisted with no pivot row
+     * and no error, so this override is the guarantee rather than the
+     * optimisation. Every persistence entry point Eloquent offers — `create()`,
+     * `createQuietly()`, `saveQuietly()`, `push()`, relation saves, factories —
+     * funnels through `save()`, so covering it here covers all of them.
+     *
+     * Flushing clears the pending list before it writes, so on a loud save the
+     * event has already emptied it and this call is a no-op.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    public function save(array $options = []): bool
+    {
+        $saved = parent::save($options);
+
+        if ($saved) {
+            $this->flushPendingTagAttributes();
+        }
+
+        return $saved;
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Magic Attribute Access
@@ -43,10 +73,43 @@ trait HasTags
     {
         // Check if this key is a declared tag attribute
         if ($this->isTagAttribute($key)) {
+            // An assignment made before the model existed has not reached the
+            // pivot yet — there is no key to point a pivot row at. Answer from
+            // the held value rather than from a query that cannot match
+            // anything, or `factory()->make(['status' => 'pending'])->status`
+            // reads null and so does any validation between fill() and save().
+            if (! $this->exists && array_key_exists($key, $this->pendingTagAttributes)) {
+                return $this->pendingTagAttributeValue($key, $this->pendingTagAttributes[$key]);
+            }
+
             return $this->getTagAttributeValue($key);
         }
 
         return parent::getAttribute($key);
+    }
+
+    /**
+     * A held assignment, spelled the way the save is going to spell it.
+     *
+     * Reading before and after the save must agree, so this mirrors the write
+     * and read paths exactly: a value tag's slug is the enum's backing value
+     * verbatim or `Str::slug()` of a string, and a definition that names an
+     * enum reads back as one of its cases.
+     */
+    protected function pendingTagAttributeValue(string $key, mixed $value): mixed
+    {
+        if (! is_string($value) && ! $value instanceof BackedEnum) {
+            return $value;
+        }
+
+        $slug = $value instanceof BackedEnum ? (string) $value->value : Str::slug($value);
+        $definition = $this->getTagAttributeDefinition($key);
+
+        if ($definition !== null && ($enum = $definition::enum())) {
+            return $enum::tryFrom($slug);
+        }
+
+        return $slug;
     }
 
     public function setAttribute($key, $value)

@@ -11,6 +11,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
 > It will go to `1.0.0` when the consuming apps ship publicly.
 
+## [0.5.1] - 2026-08-17
+
+A defect-fix release for 0.5.0. If you are on 0.5.0 and you seed, take this one:
+`composer require robinsonryan/taxon:^0.5.1`. No migration, no schema change, no
+API change.
+
+### Fixed
+
+- **A quiet save dropped a pending tag assignment on the floor.** This is the
+  0.5.0 defect, and it was the worse failure mode of the two: 0.4.1 threw a loud
+  `QueryException` when a tag attribute was mass-assigned on an unsaved model,
+  0.5.0 held the assignment and flushed it from a `saved` listener — and
+  `saveQuietly()`, `createQuietly()` and `Model::withoutEvents()` suppress that
+  event. The row persisted with **no pivot row and no error**. Seeders and
+  observer-avoidance code are exactly where a quiet save lives, so this was
+  silent data loss in the place most likely to hit it.
+
+  `HasTags` now overrides `save()` and flushes after `parent::save()` returns,
+  which every persistence entry point Eloquent offers funnels through. The
+  `saved` listener stays, so on a loud save the flush still happens inside the
+  model's save lifecycle where a consumer's own `saved` observer can see the
+  tag; flushing clears the pending list first, so the second call is a no-op and
+  the pivot is written exactly once.
+
+  Two things to know about a trait that now defines `save()`. A model of your
+  own that declares its own `save()` silently wins over the trait's and loses
+  the backstop (loud saves still flush from the event) — call
+  `flushPendingTagAttributes()` after `parent::save()` if you need it. And a
+  second trait on the same model that also defines `save()` is now a fatal
+  collision where it used to compose; resolve it with `insteadof`.
+
+- **A pending assignment was invisible to reads until the save.**
+  `factory()->make(['status' => 'pending'])->status` returned `null`, as did any
+  validation between `fill()` and `save()`, because `getAttribute()` queried a
+  pivot that cannot exist yet. A tag attribute on an unsaved model now reads
+  back the held value, spelled the way the save is going to spell it:
+  `Str::slug()` of a string, an enum's backing value verbatim, and promoted to
+  the definition's enum case where the definition names one — so the read agrees
+  before and after `save()`. A model that has never been assigned the attribute
+  still reads `null`.
+
+- **The `uuidv7()` capability probe cached one answer per process.**
+  `SchemaSupport::supportsUuidV7()` cached against whichever connection asked
+  first, so a process migrating several connections in sequence — a tenancy loop
+  over a mixed fleet — inherited the first answer. The cache is keyed by
+  connection name now.
+
+### Documentation
+
+- **Corrected a false rationale recorded in four places.** `SchemaSupport`, the
+  `add_default_uuidv7_to_taxon_ids` migration, this changelog's 0.5.0 entry and
+  `CLAUDE.md` all said `attach()` writes the pivot "through the query builder,
+  never through a model". It does not: `tags()` sets `->using(Taggable::class)`,
+  so `attach()` takes the framework's `attachUsingCustomClass` branch and saves
+  pivot **models** — a `Taggable::creating` listener fires, and a test now
+  asserts that it does. The column default is still required in `uuid7` mode;
+  the reason is that nothing in this package generates a key, not that no model
+  is involved. Nothing shipped changes — but a maintainer reasoning from "no
+  model events on pivot writes" would build something broken.
+
+### Tests
+
+- `tests/Feature/SeedingWorkflowTest.php` runs a consumer-shaped seeder through
+  `db:seed` in the four shapes a seeder actually uses — `create()`,
+  `saveQuietly()`, a factory batch, and `make()` then `save()` — and asserts a
+  pivot row for every seeded model. The quiet-save case is the one that would
+  have caught the defect above.
+- Quiet-save and pre-save-read coverage in `MagicAttributesTest`, the
+  per-connection probe and the pivot-model proof in `SchemaSupportTest`, and
+  `make()` / `createQuietly()` cases in `Uuid7DatabaseGeneratedKeysTest` for
+  uuid7 mode.
+
 ## [0.5.0] - 2026-08-17
 
 > **Read this before upgrading.** In `uuid7` mode this release stops generating
@@ -81,11 +153,16 @@ Requires **PostgreSQL 18 or later** in `uuid7` mode — `uuidv7()` is a PostgreS
   end generates it, so bigint installs hit it too.
 
 - **`taggables.id` had nothing to generate it in `uuid7` mode.** The create
-  migration declared both key columns without a database default, and
-  `attach()` writes the pivot through the query builder rather than through a
-  model — so no model hook could ever have covered it. Both columns now get the
-  default, applied through `Support\SchemaSupport`, which probes the connection
-  first so the migration still runs on SQLite, MySQL and PostgreSQL below 18.
+  migration declared both key columns without a database default, and nothing
+  in the package mints a pivot key. Both columns now get the default, applied
+  through `Support\SchemaSupport`, which probes the connection first so the
+  migration still runs on SQLite, MySQL and PostgreSQL below 18.
+
+  *(Corrected in 0.5.1: this entry originally said `attach()` writes the pivot
+  "through the query builder, never through a model". It does not — `tags()`
+  sets `->using(Taggable::class)`, so `attach()` saves pivot models. The default
+  is still required; the reason is that no model generates a key, not that no
+  model is involved.)*
 
 ### Added
 

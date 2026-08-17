@@ -201,4 +201,19 @@ describe('a factory whose definition() mass-assigns a tag attribute', function (
 
         expect(DB::connection(UUID7_CONNECTION)->table('taggables')->count())->toBe(3);
     });
+
+    it('reads the tag off an unsaved make(), before there is a key or a pivot row', function (): void {
+        $model = Uuid7TestModel::factory()->make();
+
+        expect($model->status)->toBe('pending')
+            ->and($model->getKey())->toBeNull()
+            ->and(DB::connection(UUID7_CONNECTION)->table('taggables')->count())->toBe(0);
+    });
+
+    it('lands the pivot row on a quiet create, where no saved event fires', function (): void {
+        $model = Uuid7TestModel::factory()->createQuietly();
+
+        expect(DB::connection(UUID7_CONNECTION)->table('taggables')
+            ->where('taggable_id', $model->getKey())->count())->toBe(1);
+    });
 });
